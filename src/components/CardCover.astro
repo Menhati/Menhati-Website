@@ -1,0 +1,70 @@
+---
+import { flagFor } from '../lib/flags';
+
+interface Props {
+  image?: string;
+  imageCredit?: string;
+  country: string;
+  alt: string;
+  /** Tailwind aspect-ratio class */
+  ratio?: string;
+  eager?: boolean;
+}
+
+const { image, imageCredit, country, alt, ratio = 'aspect-[16/10]', eager = false } = Astro.props;
+const flag = flagFor(country);
+
+// Deterministic tint per country: the same country always looks the same, and
+// neighbouring cards in a grid stay visually distinguishable. Used only for the
+// designed fallback — never layered over a real photo.
+const tints = [
+  'from-[#14324e] to-[#0A1B30]',
+  'from-[#1d3f52] to-[#0A1B30]',
+  'from-[#243a5e] to-[#0A1B30]',
+  'from-[#16304a] to-[#0A1B30]',
+  'from-[#1b3a44] to-[#0A1B30]',
+];
+let hash = 0;
+for (const ch of country) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+const tint = tints[hash % tints.length];
+---
+
+<div class={`relative ${ratio} overflow-hidden bg-navy-900`}>
+  {image ? (
+    <>
+      <!-- The wrapper already renders the flag/tint underneath, so hiding a
+           broken image degrades to the designed cover instead of a blank box. -->
+      <div class={`absolute inset-0 bg-gradient-to-br ${tint} pattern-lattice flex items-center justify-center`}>
+        <span class="text-[2.5rem] leading-none opacity-90 select-none" aria-hidden="true">{flag}</span>
+      </div>
+      <img
+        src={image}
+        alt={alt}
+        loading={eager ? 'eager' : 'lazy'}
+        decoding="async"
+        onerror="this.style.display='none'"
+        class="relative w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+      />
+      <!-- Bottom scrim keeps the overlaid country chip legible on any photo -->
+      <div class="absolute inset-0 bg-gradient-to-t from-navy-950/75 via-navy-950/10 to-transparent"></div>
+      <span class="absolute bottom-2 inset-inline-start-2.5 inline-flex items-center gap-1.5 text-xs font-body font-semibold text-white">
+        <span aria-hidden="true">{flag}</span>
+        {country}
+      </span>
+      {imageCredit && (
+        /* Bottom-end: keeps clear of the country chip (bottom-start) and the
+           countdown badge the card overlays at top-end. */
+        <span class="absolute bottom-2 inset-inline-end-2.5 text-[9px] leading-none text-white/60 font-body max-w-[45%] truncate">
+          {imageCredit}
+        </span>
+      )}
+    </>
+  ) : (
+    /* No licensed photo for this institution — a designed country cover rather
+       than a stock/AI image that would misrepresent the real campus. */
+    <div class={`absolute inset-0 bg-gradient-to-br ${tint} pattern-lattice flex flex-col items-center justify-center gap-1.5`}>
+      <span class="text-[2.75rem] leading-none drop-shadow-lg select-none" aria-hidden="true">{flag}</span>
+      <span class="text-[0.8125rem] font-body font-semibold text-white/90">{country}</span>
+    </div>
+  )}
+</div>

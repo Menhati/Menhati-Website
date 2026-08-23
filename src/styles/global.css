@@ -1,0 +1,199 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Cairo', sans-serif;
+    scroll-behavior: smooth;
+    background-color: #F8FAFC;
+    color: #0F172A;
+    /* Arabic script needs more leading than Latin to stay comfortable to read */
+    line-height: 1.9;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Tajawal', sans-serif;
+    line-height: 1.4;
+    text-wrap: balance;
+  }
+
+  /* Consistent, visible keyboard focus everywhere */
+  :focus-visible {
+    outline: 2px solid theme('colors.gold.500');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: theme('colors.gold.300');
+    color: theme('colors.navy.900');
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Readable measure for long-form Arabic body copy */
+  .measure {
+    max-width: 68ch;
+  }
+
+  /* Glassmorphism Surfaces */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(226, 232, 240, 0.8);
+  }
+
+  .glass-dark {
+    background: rgba(10, 27, 48, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* Subtle Ambient Background Texture */
+  .bg-radial-glow {
+    background-image: radial-gradient(circle at 50% 0%, rgba(200, 155, 60, 0.15) 0%, transparent 60%);
+  }
+
+  .pattern-lattice {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='none' stroke='%23DEBB68' stroke-opacity='0.12' stroke-width='1'%3E%3Cpath d='M28 4 34 16 46 10 40 22 52 28 40 34 46 46 34 40 28 52 22 40 10 46 16 34 4 28 16 22 10 10 22 16Z'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 56px 56px;
+  }
+
+  /* Certificate-corner clip, kept for the seal motif */
+  .seal-notch {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+
+  /* Staggered card entrance. Pure CSS with fill-mode both so content is never
+     left invisible if the animation never runs (e.g. backgrounded tab). */
+  .card-in {
+    animation: card-in 0.5s ease both;
+  }
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Markdown body styling ───────────────────────────────────────────────
+   Used by scholarship detail pages for the rendered markdown. Lives here
+   rather than in a page's <style> block so a page rewrite can't silently
+   drop it and leave the content unstyled. No typography plugin installed,
+   so this is the real styling layer. */
+.mh-prose p {
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.975rem;
+  line-height: 2.05;
+  color: #3a3f47;
+  margin: 0 0 1.15rem;
+}
+.mh-prose p:last-child { margin-bottom: 0; }
+
+.mh-prose strong {
+  font-weight: 700;
+  color: #0A1B30;
+}
+
+.mh-prose h2 {
+  font-family: 'Tajawal', sans-serif;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #0A1B30;
+  margin: 2.25rem 0 1rem;
+  padding-inline-start: 0.85rem;
+  border-inline-start: 3px solid #C89B3C;
+}
+.mh-prose h2:first-child { margin-top: 0; }
+
+.mh-prose ul {
+  list-style: none;
+  margin: 0 0 1.15rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.mh-prose ul li {
+  position: relative;
+  padding-inline-start: 1.9rem;
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.925rem;
+  line-height: 1.85;
+  color: #3a3f47;
+}
+.mh-prose ul li::before {
+  content: "✓";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.28em;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 9999px;
+  background: #F4E7C6;
+  color: #96712A;
+  font-size: 0.68rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mh-prose ol {
+  list-style: none;
+  counter-reset: mh-step;
+  margin: 0 0 1.15rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.mh-prose ol li {
+  counter-increment: mh-step;
+  position: relative;
+  padding-inline-start: 2.1rem;
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.925rem;
+  line-height: 1.85;
+  color: #3a3f47;
+}
+.mh-prose ol li::before {
+  content: counter(mh-step, arabic-indic);
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.1em;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: #D3DEEA;
+  color: #152E4F;
+  font-family: 'Tajawal', sans-serif;
+  font-weight: 800;
+  font-size: 0.72rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mh-prose a {
+  color: #96712A;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

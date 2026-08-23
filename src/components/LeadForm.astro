@@ -1,0 +1,202 @@
+---
+import { whatsappNumber } from '../lib/site';
+
+interface Props {
+  /** What the student was looking at — stored with the lead for context. */
+  context?: string;
+  title?: string;
+  subtitle?: string;
+  /** Rendered on a dark background (e.g. inside the navy CTA band) */
+  tone?: 'light' | 'dark';
+}
+
+const {
+  context = 'عام',
+  title = 'اترك بياناتك ونتواصل معك',
+  subtitle = 'سنراجع حالتك ونرشّح لك المنح الأنسب، ونخبرك بالمستندات المطلوبة — بدون أي رسوم على الاستشارة الأولى.',
+  tone = 'light',
+} = Astro.props;
+
+const dark = tone === 'dark';
+---
+
+<div
+  class:list={[
+    'rounded-2xl border p-6 sm:p-8',
+    dark ? 'bg-white/[0.06] border-white/10' : 'bg-white border-navy-100 shadow-sm',
+  ]}
+  data-lead-root
+  data-wa={whatsappNumber}
+>
+  <!-- Form -->
+  <div data-lead-form-wrap>
+    <h3 class:list={['font-display font-bold text-lg sm:text-xl', dark ? 'text-white' : 'text-navy-900']}>
+      {title}
+    </h3>
+    <p class:list={['mt-2 text-[0.8125rem] sm:text-sm leading-[1.95]', dark ? 'text-navy-100' : 'text-navy-500']}>
+      {subtitle}
+    </p>
+
+    <form data-lead-form class="mt-6 grid sm:grid-cols-2 gap-3.5" novalidate>
+      <input type="hidden" name="context" value={context} />
+      <!-- Honeypot: real users never fill this; bots usually do. -->
+      <input type="text" name="website" tabindex="-1" autocomplete="off" class="hidden" aria-hidden="true" />
+
+      <label class="block">
+        <span class:list={['block text-xs font-body mb-1.5', dark ? 'text-navy-100' : 'text-navy-600']}>
+          الاسم الكامل <span class="text-closing">*</span>
+        </span>
+        <input
+          type="text" name="name" required autocomplete="name"
+          class:list={['lead-input', dark && 'lead-input-dark']}
+          placeholder="مثال: أحمد عبدالله"
+        />
+      </label>
+
+      <label class="block">
+        <span class:list={['block text-xs font-body mb-1.5', dark ? 'text-navy-100' : 'text-navy-600']}>
+          رقم واتساب <span class="text-closing">*</span>
+        </span>
+        <input
+          type="tel" name="phone" required inputmode="tel" autocomplete="tel"
+          class:list={['lead-input', dark && 'lead-input-dark']}
+          placeholder="+9665xxxxxxxx"
+          dir="ltr"
+        />
+      </label>
+
+      <label class="block sm:col-span-2">
+        <span class:list={['block text-xs font-body mb-1.5', dark ? 'text-navy-100' : 'text-navy-600']}>
+          ما الذي تبحث عنه؟ <span class:list={[dark ? 'text-navy-300' : 'text-navy-400']}>(اختياري)</span>
+        </span>
+        <textarea
+          name="message" rows="3"
+          class:list={['lead-input resize-y', dark && 'lead-input-dark']}
+          placeholder="تخصصك، معدلك، والدولة التي تفضلها…"
+        ></textarea>
+      </label>
+
+      <p data-lead-error class="sm:col-span-2 text-[0.8125rem] font-body text-closing" hidden></p>
+
+      <div class="sm:col-span-2 flex flex-col sm:flex-row gap-3 sm:items-center">
+        <button
+          type="submit"
+          data-lead-submit
+          class="bg-gold-500 hover:bg-gold-300 disabled:opacity-60 disabled:cursor-not-allowed text-navy-900 font-body font-bold text-sm px-7 py-3.5 rounded-xl transition-colors"
+        >
+          أرسل بياناتي
+        </button>
+        <span class:list={['text-[0.75rem] font-body leading-[1.8]', dark ? 'text-navy-200' : 'text-navy-400']}>
+          لن نشارك بياناتك مع أي جهة خارجية.
+        </span>
+      </div>
+    </form>
+  </div>
+
+  <!-- Success state -->
+  <div data-lead-success hidden class="text-center py-4">
+    <span class="mx-auto grid place-items-center w-14 h-14 rounded-full bg-live/15 text-live">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 13 4 4L19 7" />
+      </svg>
+    </span>
+    <h3 class:list={['font-display font-bold text-lg mt-4', dark ? 'text-white' : 'text-navy-900']}>
+      وصلتنا بياناتك
+    </h3>
+    <p class:list={['mt-2 text-sm leading-[1.95] max-w-md mx-auto', dark ? 'text-navy-100' : 'text-navy-500']}>
+      سنتواصل معك عبر واتساب قريباً. للتعجيل، يمكنك مراسلتنا مباشرة الآن:
+    </p>
+    <a
+      data-lead-wa
+      href={`https://wa.me/${whatsappNumber}`}
+      target="_blank"
+      rel="noopener"
+      class="mt-5 inline-flex items-center gap-2 bg-live hover:brightness-110 text-white font-body font-bold text-sm px-6 py-3.5 rounded-xl transition-all"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.96 6.45 17.5 2 12.04 2Zm5.8 14.1c-.24.68-1.4 1.3-1.93 1.38-.5.08-1.11.11-1.79-.11-.41-.13-.94-.3-1.62-.6-2.85-1.23-4.71-4.1-4.85-4.29-.14-.19-1.16-1.54-1.16-2.94 0-1.4.73-2.08.99-2.37.26-.28.57-.35.76-.35h.55c.18 0 .41-.07.64.49.24.58.81 2 .88 2.14.07.14.12.31.02.5-.09.19-.14.31-.28.47-.14.16-.29.36-.42.48-.14.14-.28.29-.12.56.16.28.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.28.14.44.12.6-.07.16-.19.68-.79.86-1.06.19-.28.37-.23.62-.14.26.09 1.63.77 1.9.91.28.14.46.21.53.33.07.12.07.68-.17 1.35Z"/>
+      </svg>
+      تابع المحادثة على واتساب
+    </a>
+  </div>
+</div>
+
+<style>
+  .lead-input {
+    @apply w-full rounded-xl border border-navy-100 bg-white px-3.5 py-3 text-sm font-body text-navy-900
+           placeholder:text-navy-300 focus:border-gold-500 focus:outline-none transition-colors;
+  }
+  .lead-input-dark {
+    @apply bg-white/10 border-white/15 text-white placeholder:text-navy-300;
+  }
+  .lead-input[aria-invalid='true'] {
+    @apply border-closing;
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-lead-root]').forEach((root) => {
+    const waNumber = root.dataset.wa ?? '';
+    const form = root.querySelector<HTMLFormElement>('[data-lead-form]');
+    const formWrap = root.querySelector<HTMLElement>('[data-lead-form-wrap]');
+    const success = root.querySelector<HTMLElement>('[data-lead-success]');
+    const errorEl = root.querySelector<HTMLElement>('[data-lead-error]');
+    const submitBtn = root.querySelector<HTMLButtonElement>('[data-lead-submit]');
+    const waLink = root.querySelector<HTMLAnchorElement>('[data-lead-wa]');
+    if (!form || !formWrap || !success || !errorEl || !submitBtn || !waLink) return;
+
+    function fail(msg: string) {
+      errorEl!.textContent = msg;
+      errorEl!.hidden = false;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+
+      const data = new FormData(form);
+      const name = String(data.get('name') ?? '').trim();
+      const phone = String(data.get('phone') ?? '').trim();
+      const message = String(data.get('message') ?? '').trim();
+      const context = String(data.get('context') ?? '');
+
+      const nameEl = form.querySelector<HTMLInputElement>('[name="name"]')!;
+      const phoneEl = form.querySelector<HTMLInputElement>('[name="phone"]')!;
+      nameEl.setAttribute('aria-invalid', String(!name));
+      phoneEl.setAttribute('aria-invalid', String(phone.replace(/\D/g, '').length < 8));
+
+      if (!name) return fail('الرجاء إدخال الاسم الكامل.');
+      if (phone.replace(/\D/g, '').length < 8) return fail('الرجاء إدخال رقم واتساب صحيح.');
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'جارٍ الإرسال…';
+
+      const payload = { name, phone, message, context, page: location.pathname };
+
+      // The lead is delivered by a Cloudflare Pages Function in production.
+      // If that endpoint isn't available (local `astro dev`, or before the
+      // function is configured), we still hand the user off to WhatsApp with a
+      // pre-filled message rather than dropping the lead entirely.
+      try {
+        await fetch('/api/lead', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        /* offline or endpoint missing — fall through to the WhatsApp handoff */
+      }
+
+      const waText =
+        `مرحباً، أنا ${name}.\n` +
+        (context && context !== 'عام' ? `بخصوص: ${context}\n` : '') +
+        (message ? `${message}\n` : '') +
+        `رقمي: ${phone}`;
+      waLink.href = `https://wa.me/${waNumber}?text=${encodeURIComponent(waText)}`;
+
+      formWrap.hidden = true;
+      success.hidden = false;
+      success.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+</script>

@@ -1,0 +1,75 @@
+---
+import Logo from './Logo.astro';
+import { whatsappLink } from '../lib/site';
+
+const waHref = whatsappLink('مرحباً، أرغب بمعرفة المزيد عن المنح الدراسية المتاحة');
+
+const links = [
+  { href: '/', label: 'الرئيسية' },
+  { href: '/scholarships', label: 'المنح الدراسية' },
+  { href: '/quiz', label: 'اعثر على منحتك' },
+  { href: '/#how-it-works', label: 'كيف نعمل' },
+];
+---
+
+<header class="bg-navy-900 text-white sticky top-0 z-40">
+  <nav class="max-w-6xl mx-auto flex items-center justify-between px-5 py-4">
+    <a href="/" class="flex items-center gap-2">
+      <Logo height={42} />
+    </a>
+
+    <ul class="hidden md:flex items-center gap-8 font-body text-sm">
+      {links.map((link) => (
+        <li>
+          <a href={link.href} class="text-navy-100 hover:text-gold-300 transition-colors">
+            {link.label}
+          </a>
+        </li>
+      ))}
+    </ul>
+
+    <a
+      href={waHref}
+      target="_blank"
+      rel="noopener"
+      class="hidden md:inline-block bg-gold-500 text-navy-900 font-body font-semibold text-sm px-4 py-2 rounded hover:bg-gold-300 transition-colors"
+    >
+      تواصل عبر واتساب
+    </a>
+
+    <button
+      id="menu-toggle"
+      class="md:hidden text-white"
+      aria-label="فتح القائمة"
+      aria-expanded="false"
+      aria-controls="mobile-menu"
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" />
+      </svg>
+    </button>
+  </nav>
+
+  <ul id="mobile-menu" class="md:hidden hidden flex-col gap-1 px-5 pb-4 font-body text-sm">
+    {links.map((link) => (
+      <li>
+        <a href={link.href} class="block py-2 text-navy-100">{link.label}</a>
+      </li>
+    ))}
+    <li>
+      <a href={waHref} class="block py-2 text-gold-300 font-semibold">
+        تواصل عبر واتساب
+      </a>
+    </li>
+  </ul>
+</header>
+
+<script>
+  const toggle = document.getElementById('menu-toggle');
+  const menu = document.getElementById('mobile-menu');
+  toggle?.addEventListener('click', () => {
+    const isOpen = menu?.classList.toggle('hidden') === false;
+    toggle.setAttribute('aria-expanded', String(isOpen));
+    menu?.classList.toggle('flex', isOpen);
+  });
+</script>

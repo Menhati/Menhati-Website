@@ -1,0 +1,27 @@
+---
+/**
+ * The official Menhati wordmark (gold, transparent background — designed to sit
+ * on the navy navbar/footer). Source of truth is the brand asset in
+ * Menhati-material/logoo.png; `public/images/logo.png` is a trimmed, resized
+ * copy of it. The wordmark already contains the name, so no text is rendered
+ * alongside it.
+ */
+interface Props {
+  /** Rendered height in px. */
+  height?: number;
+  class?: string;
+}
+
+const { height = 40, class: className = '' } = Astro.props;
+---
+
+<img
+  src="/images/logo.png"
+  alt="منحتي"
+  width={Math.round((height * 175) / 120)}
+  height={height}
+  style={`height:${height}px`}
+  class={`w-auto shrink-0 ${className}`}
+  loading="eager"
+  decoding="async"
+/>

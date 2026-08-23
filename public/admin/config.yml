@@ -1,0 +1,167 @@
+# لوحة تحكم منحتي — إعدادات Decap CMS
+#
+# ⚠️ قبل التشغيل على الإنترنت: استبدل `repo` أدناه بمسار المستودع الحقيقي على GitHub
+#    (مثال: ubakel/menhati)، ثم فعّل مصادقة GitHub كما هو موضح في README.
+#
+# للتجربة محلياً بدون أي إعداد:
+#   1) شغّل الموقع:      npm run dev
+#   2) في نافذة أخرى:    npx decap-server
+#   3) افتح:             http://localhost:4322/admin
+#   (local_backend يجعل التعديلات تُحفظ في ملفات المشروع مباشرة)
+
+backend:
+  name: github
+  repo: your-org/menhati
+  branch: main
+
+local_backend: true
+
+publish_mode: editorial_workflow
+
+media_folder: "public/images/uploads"
+public_folder: "/images/uploads"
+
+locale: "ar"
+
+collections:
+  - name: "scholarships"
+    label: "المنح الدراسية"
+    label_singular: "منحة"
+    description: "أضف منحة جديدة أو عدّل منحة قائمة. الحقول المعلَّمة بـ * إلزامية."
+    folder: "src/content/scholarships"
+    create: true
+    slug: "{{slug}}"
+    identifier_field: title
+    summary: "{{title}} — {{country}} ({{deadline | date('YYYY-MM-DD')}})"
+    sortable_fields: ["deadline", "title", "country"]
+    view_groups:
+      - label: "الدولة"
+        field: country
+      - label: "المرحلة الدراسية"
+        field: degreeLevel
+
+    fields:
+      - label: "عنوان المنحة *"
+        name: "title"
+        widget: "string"
+        hint: "اكتبه كما يبحث عنه الطالب. مثال: منحة الحكومة التركية (تركيا بورسلاري) للبكالوريوس في تركيا"
+
+      - label: "الدولة *"
+        name: "country"
+        widget: "string"
+        hint: "اسم الدولة بالعربية فقط، مثل: تركيا، ماليزيا، ألمانيا. اكتبه بنفس الصيغة في كل المنح ليعمل الفلتر وعلم الدولة."
+
+      - label: "الجهة المانحة / الجامعة"
+        name: "university"
+        widget: "string"
+        required: false
+        hint: "اتركه فارغاً لو كانت منحة حكومية عامة غير مرتبطة بجامعة واحدة."
+
+      - label: "التخصص (نص حر) *"
+        name: "major"
+        widget: "string"
+        hint: "وصف مختصر للتخصصات المتاحة كما تعلنها الجهة. مثال: جميع التخصصات، أو: الهندسة وعلوم الحاسوب"
+
+      - label: "مجالات الدراسة (للفلترة) *"
+        name: "fieldCategories"
+        widget: "select"
+        multiple: true
+        min: 1
+        hint: "اختر مجالاً واحداً أو أكثر. تُستخدم في اختبار الأهلية. لو كانت المنحة مفتوحة لكل التخصصات اختر «جميع التخصصات»."
+        options:
+          - "هندسة وتقنية المعلومات"
+          - "إدارة أعمال واقتصاد"
+          - "طب وعلوم صحية"
+          - "علوم طبيعية وتطبيقية"
+          - "علوم إنسانية واجتماعية"
+          - "قانون"
+          - "تربية وتعليم"
+          - "إعلام واتصال"
+          - "علوم شرعية ودراسات إسلامية"
+          - "زراعة وبيئة"
+          - "جميع التخصصات"
+
+      - label: "المستوى الدراسي *"
+        name: "degreeLevel"
+        widget: "select"
+        default: "bachelor"
+        hint: "لو كانت المنحة تغطي أكثر من مرحلة، اختر المرحلة الأساسية واذكر البقية في التفاصيل بالأسفل."
+        options:
+          - { label: "بكالوريوس", value: "bachelor" }
+          - { label: "ماجستير", value: "master" }
+          - { label: "دكتوراه", value: "phd" }
+          - { label: "دبلوم", value: "diploma" }
+
+      - label: "نوع التمويل *"
+        name: "fundingType"
+        widget: "select"
+        default: "fully-funded"
+        hint: "«ممولة بالكامل» فقط إذا كانت تغطي الرسوم والمعيشة. الإعفاء الجزئي من الرسوم = تمويل جزئي."
+        options:
+          - { label: "ممولة بالكامل", value: "fully-funded" }
+          - { label: "تمويل جزئي", value: "partial" }
+
+      - label: "قيمة المنحة / ما الذي تغطيه *"
+        name: "awardValue"
+        widget: "text"
+        hint: "اذكر ما تغطيه فعلاً بدقة. مثال: تغطية كاملة للرسوم + بدل شهري 934 يورو + تأمين صحي + تذكرة سفر"
+
+      - label: "الموعد النهائي *"
+        name: "deadline"
+        widget: "datetime"
+        date_format: "YYYY-MM-DD"
+        time_format: false
+        picker_utc: true
+        format: "YYYY-MM-DD"
+        hint: "آخر موعد للتقديم كما هو معلن رسمياً. المنح المنتهية تبقى ظاهرة في قسم «مغلقة حالياً» — لا تحذفها."
+
+      - label: "أقل معدل مطلوب"
+        name: "gpaMin"
+        widget: "number"
+        required: false
+        value_type: "float"
+        hint: "اتركه فارغاً إذا لم تعلن الجهة حداً أدنى. اكتب الرقم فقط (مثال: 3 أو 75)."
+
+      - label: "سلّم المعدل"
+        name: "gpaScale"
+        widget: "select"
+        default: "4.0"
+        hint: "مهم جداً: اختر السلّم الذي أُعلن به المعدل أعلاه، حتى تعمل المطابقة في اختبار الأهلية بشكل صحيح."
+        options:
+          - { label: "من 4.0", value: "4.0" }
+          - { label: "من 5.0", value: "5.0" }
+          - { label: "نسبة مئوية من 100", value: "100" }
+
+      - label: "رابط الجهة الرسمية"
+        name: "applyUrl"
+        widget: "string"
+        required: false
+        pattern: ["^https?://.+", "يجب أن يبدأ الرابط بـ http:// أو https://"]
+        hint: "رابط الصفحة الرسمية للمنحة (وزارة، سفارة، أو الجامعة). لا تضع رابط موقع تجميع منح."
+
+      - label: "صورة الجامعة / الغلاف"
+        name: "image"
+        widget: "image"
+        required: false
+        allow_multiple: false
+        hint: "اختياري. استخدم صورة حقيقية للجامعة ومسموح بإعادة نشرها (Wikimedia Commons مثلاً). إن لم تتوفر، سيظهر تصميم بعلم الدولة تلقائياً."
+
+      - label: "نسبة الصورة (المصدر والترخيص)"
+        name: "imageCredit"
+        widget: "string"
+        required: false
+        hint: "إلزامي قانونياً عند استخدام صورة بترخيص CC. مثال: الصورة: Revi عبر Wikimedia Commons (CC BY 2.0)"
+
+      - label: "عرضها ضمن المنح المميزة"
+        name: "featured"
+        widget: "boolean"
+        default: false
+        required: false
+        hint: "المنح المميزة تظهر أولاً في الصفحة الرئيسية (المفتوحة فقط)."
+
+      - label: "تفاصيل المنحة *"
+        name: "body"
+        widget: "markdown"
+        hint: >-
+          ابدأ بفقرة تعريفية قصيرة (٢-٤ أسطر)، ثم عنوان «## الشروط الأساسية» بقائمة نقاط،
+          ثم «## المستندات المطلوبة» إن توفرت. لا تكتب معلومة غير مؤكدة من المصدر الرسمي.

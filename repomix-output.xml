@@ -1,0 +1,4089 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+functions/
+  api/
+    lead.ts
+public/
+  admin/
+    config.yml
+    index.html
+  images/
+    universities/
+      buv.jpg
+      debrecen.jpg
+      dsu-toscana.jpg
+      gist.jpg
+      hbku.jpg
+      kaist.jpg
+      limerick.jpg
+      rmit.jpg
+      tdtu.jpg
+      transilvania.jpg
+      ums.jpg
+      unsw.jpg
+      vnu-is.jpg
+    logo.png
+  favicon.svg
+src/
+  components/
+    CardCover.astro
+    CountdownSeal.astro
+    Footer.astro
+    HeroIllustration.astro
+    LeadForm.astro
+    Logo.astro
+    Navbar.astro
+    ScholarshipCard.astro
+    WhatsAppButton.astro
+  content/
+    scholarships/
+      aiu-foundation-bachelor-malaysia.md
+      australia-awards-master-australia.md
+      brunei-government-bachelor-brunei.md
+      buv-bachelor-vietnam.md
+      chevening-master-uk.md
+      csc-master-china.md
+      dad-master-germany.md
+      debrecen-stipendium-bachelor-hungary.md
+      diyanet-tdv-bachelor-turkey.md
+      dsu-toscana-bachelor-italy.md
+      gist-master-southkorea.md
+      gks-undergraduate-southkorea.md
+      hbku-master-qatar.md
+      iccr-bachelor-india.md
+      isdb-merit-phd.md
+      kaist-bachelor-southkorea.md
+      kazakhstan-government-bachelor-kazakhstan.md
+      knb-bachelor-indonesia.md
+      limerick-goi-master-ireland.md
+      mext-master-japan.md
+      mis-master-malaysia.md
+      nl-scholarship-bachelor-netherlands.md
+      open-doors-bachelor-russia.md
+      rmit-bachelor-vietnam.md
+      romania-mfa-bachelor-romania.md
+      russia-government-bachelor-russia.md
+      study-in-iraq-bachelor-iraq.md
+      tdtu-bachelor-vietnam.md
+      transilvania-academica-master-romania.md
+      turkiye-burslari-bachelor-turkey.md
+      ums-bachelor-indonesia.md
+      unsw-bachelor-australia.md
+      vnu-is-bachelor-vietnam.md
+    config.ts
+  layouts/
+    Layout.astro
+  lib/
+    flags.ts
+    scholarship.ts
+    site.ts
+  pages/
+    scholarships/
+      [slug].astro
+      index.astro
+    index.astro
+    quiz.astro
+  styles/
+    global.css
+  env.d.ts
+.gitignore
+astro.config.mjs
+CONTEXT.md
+package.json
+README.md
+schema.sql
+tailwind.config.mjs
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="functions/api/lead.ts">
+/**
+ * POST /api/lead — receives a lead from the site's contact/quiz forms.
+ *
+ * Runs as a Cloudflare Pages Function (production, or `npx wrangler pages dev`).
+ * It does NOT run under plain `astro dev` — there the form falls back to a
+ * WhatsApp handoff, so leads are never lost during local development.
+ *
+ * Every delivery channel is optional and independently configured, so the
+ * endpoint keeps working as you add them:
+ *
+ *   D1 binding   LEADS_DB        → stores the lead in a `leads` table (see schema.sql)
+ *   env var      RESEND_API_KEY  → emails the team via Resend
+ *   env var      LEAD_TO_EMAIL   → recipient (defaults to info@menhati.com)
+ *   env var      LEAD_FROM_EMAIL → verified sender address in Resend
+ *
+ * With nothing configured it still returns 200, so the visitor never hits an
+ * error — the browser then hands them to WhatsApp, which is the real safety net.
+ *
+ * Setup steps are in README.md → "التقاط بيانات المهتمين (Leads)".
+ */
+
+// Minimal local types so this file needs no @cloudflare/workers-types dependency.
+interface D1Result {
+  success: boolean;
+}
+interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement;
+  run(): Promise<D1Result>;
+}
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+}
+
+interface Env {
+  LEADS_DB?: D1Database;
+  RESEND_API_KEY?: string;
+  LEAD_TO_EMAIL?: string;
+  LEAD_FROM_EMAIL?: string;
+}
+
+interface EventContext {
+  request: Request;
+  env: Env;
+}
+
+interface LeadPayload {
+  name?: string;
+  phone?: string;
+  message?: string;
+  context?: string;
+  page?: string;
+  website?: string; // honeypot
+}
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  });
+
+const clean = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
+
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+  );
+}
+
+export async function onRequestPost({ request, env }: EventContext): Promise<Response> {
+  let payload: LeadPayload;
+  try {
+    payload = (await request.json()) as LeadPayload;
+  } catch {
+    return json({ ok: false, error: 'bad_json' }, 400);
+  }
+
+  // Honeypot — accept silently so bots don't learn they were caught.
+  if (clean(payload.website, 100)) return json({ ok: true });
+
+  const name = clean(payload.name, 120);
+  const phone = clean(payload.phone, 40);
+  const message = clean(payload.message, 2000);
+  const context = clean(payload.context, 200);
+  const page = clean(payload.page, 200);
+
+  if (!name || phone.replace(/\D/g, '').length < 8) {
+    return json({ ok: false, error: 'validation' }, 400);
+  }
+
+  const receivedAt = new Date().toISOString();
+  const country = request.headers.get('CF-IPCountry') ?? '';
+  const problems: string[] = [];
+
+  // 1) Persist ------------------------------------------------------------
+  if (env.LEADS_DB) {
+    try {
+      await env.LEADS_DB.prepare(
+        `INSERT INTO leads (name, phone, message, context, page, country, received_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(name, phone, message, context, page, country, receivedAt)
+        .run();
+    } catch (err) {
+      problems.push(`d1: ${(err as Error).message}`);
+    }
+  }
+
+  // 2) Notify the team ----------------------------------------------------
+  if (env.RESEND_API_KEY) {
+    const to = env.LEAD_TO_EMAIL || 'info@menhati.com';
+    const from = env.LEAD_FROM_EMAIL || 'leads@menhati.com';
+    const rows: [string, string][] = [
+      ['الاسم', name],
+      ['واتساب', phone],
+      ['بخصوص', context || '—'],
+      ['الرسالة', message || '—'],
+      ['الصفحة', page || '—'],
+      ['الدولة (تقديرية)', country || '—'],
+      ['التاريخ', receivedAt],
+    ];
+
+    const html =
+      `<div dir="rtl" style="font-family:system-ui,sans-serif;line-height:1.9">` +
+      `<h2 style="margin:0 0 12px">طلب جديد من موقع منحتي</h2>` +
+      `<table cellpadding="6" style="border-collapse:collapse">` +
+      rows
+        .map(
+          ([k, v]) =>
+            `<tr><td style="color:#64748b;white-space:nowrap">${k}</td>` +
+            `<td><strong>${escapeHtml(v)}</strong></td></tr>`
+        )
+        .join('') +
+      `</table>` +
+      `<p style="margin-top:16px">` +
+      `<a href="https://wa.me/${phone.replace(/\D/g, '')}" ` +
+      `style="background:#3E7A5C;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">` +
+      `مراسلة ${escapeHtml(name)} على واتساب</a></p></div>`;
+
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: `منحتي <${from}>`,
+          to: [to],
+          reply_to: to,
+          subject: `طلب جديد من ${name}${context && context !== 'عام' ? ` — ${context}` : ''}`,
+          html,
+        }),
+      });
+      if (!res.ok) problems.push(`resend: ${res.status} ${await res.text()}`);
+    } catch (err) {
+      problems.push(`resend: ${(err as Error).message}`);
+    }
+  }
+
+  if (problems.length) {
+    // Logged for the operator (Cloudflare dashboard → Functions → Logs).
+    // The visitor still gets a success response plus the WhatsApp handoff, so a
+    // misconfigured backend never costs a lead.
+    console.error('[lead] delivery problems:', problems.join(' | '), `name=${name} phone=${phone}`);
+  }
+
+  return json({ ok: true });
+}
+
+/** Anything that isn't POST gets a clear answer instead of a confusing 404. */
+export async function onRequestGet(): Promise<Response> {
+  return json({ ok: false, error: 'method_not_allowed' }, 405);
+}
+</file>
+
+<file path="public/admin/config.yml">
+# لوحة تحكم منحتي — إعدادات Decap CMS
+#
+# ⚠️ قبل التشغيل على الإنترنت: استبدل `repo` أدناه بمسار المستودع الحقيقي على GitHub
+#    (مثال: ubakel/menhati)، ثم فعّل مصادقة GitHub كما هو موضح في README.
+#
+# للتجربة محلياً بدون أي إعداد:
+#   1) شغّل الموقع:      npm run dev
+#   2) في نافذة أخرى:    npx decap-server
+#   3) افتح:             http://localhost:4322/admin
+#   (local_backend يجعل التعديلات تُحفظ في ملفات المشروع مباشرة)
+
+backend:
+  name: github
+  repo: your-org/menhati
+  branch: main
+
+local_backend: true
+
+publish_mode: editorial_workflow
+
+media_folder: "public/images/uploads"
+public_folder: "/images/uploads"
+
+locale: "ar"
+
+collections:
+  - name: "scholarships"
+    label: "المنح الدراسية"
+    label_singular: "منحة"
+    description: "أضف منحة جديدة أو عدّل منحة قائمة. الحقول المعلَّمة بـ * إلزامية."
+    folder: "src/content/scholarships"
+    create: true
+    slug: "{{slug}}"
+    identifier_field: title
+    summary: "{{title}} — {{country}} ({{deadline | date('YYYY-MM-DD')}})"
+    sortable_fields: ["deadline", "title", "country"]
+    view_groups:
+      - label: "الدولة"
+        field: country
+      - label: "المرحلة الدراسية"
+        field: degreeLevel
+
+    fields:
+      - label: "عنوان المنحة *"
+        name: "title"
+        widget: "string"
+        hint: "اكتبه كما يبحث عنه الطالب. مثال: منحة الحكومة التركية (تركيا بورسلاري) للبكالوريوس في تركيا"
+
+      - label: "الدولة *"
+        name: "country"
+        widget: "string"
+        hint: "اسم الدولة بالعربية فقط، مثل: تركيا، ماليزيا، ألمانيا. اكتبه بنفس الصيغة في كل المنح ليعمل الفلتر وعلم الدولة."
+
+      - label: "الجهة المانحة / الجامعة"
+        name: "university"
+        widget: "string"
+        required: false
+        hint: "اتركه فارغاً لو كانت منحة حكومية عامة غير مرتبطة بجامعة واحدة."
+
+      - label: "التخصص (نص حر) *"
+        name: "major"
+        widget: "string"
+        hint: "وصف مختصر للتخصصات المتاحة كما تعلنها الجهة. مثال: جميع التخصصات، أو: الهندسة وعلوم الحاسوب"
+
+      - label: "مجالات الدراسة (للفلترة) *"
+        name: "fieldCategories"
+        widget: "select"
+        multiple: true
+        min: 1
+        hint: "اختر مجالاً واحداً أو أكثر. تُستخدم في اختبار الأهلية. لو كانت المنحة مفتوحة لكل التخصصات اختر «جميع التخصصات»."
+        options:
+          - "هندسة وتقنية المعلومات"
+          - "إدارة أعمال واقتصاد"
+          - "طب وعلوم صحية"
+          - "علوم طبيعية وتطبيقية"
+          - "علوم إنسانية واجتماعية"
+          - "قانون"
+          - "تربية وتعليم"
+          - "إعلام واتصال"
+          - "علوم شرعية ودراسات إسلامية"
+          - "زراعة وبيئة"
+          - "جميع التخصصات"
+
+      - label: "المستوى الدراسي *"
+        name: "degreeLevel"
+        widget: "select"
+        default: "bachelor"
+        hint: "لو كانت المنحة تغطي أكثر من مرحلة، اختر المرحلة الأساسية واذكر البقية في التفاصيل بالأسفل."
+        options:
+          - { label: "بكالوريوس", value: "bachelor" }
+          - { label: "ماجستير", value: "master" }
+          - { label: "دكتوراه", value: "phd" }
+          - { label: "دبلوم", value: "diploma" }
+
+      - label: "نوع التمويل *"
+        name: "fundingType"
+        widget: "select"
+        default: "fully-funded"
+        hint: "«ممولة بالكامل» فقط إذا كانت تغطي الرسوم والمعيشة. الإعفاء الجزئي من الرسوم = تمويل جزئي."
+        options:
+          - { label: "ممولة بالكامل", value: "fully-funded" }
+          - { label: "تمويل جزئي", value: "partial" }
+
+      - label: "قيمة المنحة / ما الذي تغطيه *"
+        name: "awardValue"
+        widget: "text"
+        hint: "اذكر ما تغطيه فعلاً بدقة. مثال: تغطية كاملة للرسوم + بدل شهري 934 يورو + تأمين صحي + تذكرة سفر"
+
+      - label: "الموعد النهائي *"
+        name: "deadline"
+        widget: "datetime"
+        date_format: "YYYY-MM-DD"
+        time_format: false
+        picker_utc: true
+        format: "YYYY-MM-DD"
+        hint: "آخر موعد للتقديم كما هو معلن رسمياً. المنح المنتهية تبقى ظاهرة في قسم «مغلقة حالياً» — لا تحذفها."
+
+      - label: "أقل معدل مطلوب"
+        name: "gpaMin"
+        widget: "number"
+        required: false
+        value_type: "float"
+        hint: "اتركه فارغاً إذا لم تعلن الجهة حداً أدنى. اكتب الرقم فقط (مثال: 3 أو 75)."
+
+      - label: "سلّم المعدل"
+        name: "gpaScale"
+        widget: "select"
+        default: "4.0"
+        hint: "مهم جداً: اختر السلّم الذي أُعلن به المعدل أعلاه، حتى تعمل المطابقة في اختبار الأهلية بشكل صحيح."
+        options:
+          - { label: "من 4.0", value: "4.0" }
+          - { label: "من 5.0", value: "5.0" }
+          - { label: "نسبة مئوية من 100", value: "100" }
+
+      - label: "رابط الجهة الرسمية"
+        name: "applyUrl"
+        widget: "string"
+        required: false
+        pattern: ["^https?://.+", "يجب أن يبدأ الرابط بـ http:// أو https://"]
+        hint: "رابط الصفحة الرسمية للمنحة (وزارة، سفارة، أو الجامعة). لا تضع رابط موقع تجميع منح."
+
+      - label: "صورة الجامعة / الغلاف"
+        name: "image"
+        widget: "image"
+        required: false
+        allow_multiple: false
+        hint: "اختياري. استخدم صورة حقيقية للجامعة ومسموح بإعادة نشرها (Wikimedia Commons مثلاً). إن لم تتوفر، سيظهر تصميم بعلم الدولة تلقائياً."
+
+      - label: "نسبة الصورة (المصدر والترخيص)"
+        name: "imageCredit"
+        widget: "string"
+        required: false
+        hint: "إلزامي قانونياً عند استخدام صورة بترخيص CC. مثال: الصورة: Revi عبر Wikimedia Commons (CC BY 2.0)"
+
+      - label: "عرضها ضمن المنح المميزة"
+        name: "featured"
+        widget: "boolean"
+        default: false
+        required: false
+        hint: "المنح المميزة تظهر أولاً في الصفحة الرئيسية (المفتوحة فقط)."
+
+      - label: "تفاصيل المنحة *"
+        name: "body"
+        widget: "markdown"
+        hint: >-
+          ابدأ بفقرة تعريفية قصيرة (٢-٤ أسطر)، ثم عنوان «## الشروط الأساسية» بقائمة نقاط،
+          ثم «## المستندات المطلوبة» إن توفرت. لا تكتب معلومة غير مؤكدة من المصدر الرسمي.
+</file>
+
+<file path="public/admin/index.html">
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <title>لوحة تحكم منحتي</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <script src="https://unpkg.com/decap-cms@^3.0.0/dist/decap-cms.js"></script>
+  </body>
+</html>
+</file>
+
+<file path="public/favicon.svg">
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="48" height="48" rx="13" fill="#0A1B30" />
+  <path
+    d="M24 16c-3.2-2.3-7-3-11-2.6v16.4c4 -.4 7.8.3 11 2.6 3.2-2.3 7-3 11-2.6V13.4c-4-.4-7.8.3-11 2.6Z"
+    fill="none"
+    stroke="#DEBB68"
+    stroke-width="1.6"
+    stroke-linejoin="round"
+  />
+  <path d="M24 16v14" stroke="#DEBB68" stroke-width="1.6" />
+  <path
+    d="M24 10.5c.9 1.7 2.6 2.6 2.6 4.6 0 1.5-1.2 2.6-2.6 2.6s-2.6-1.1-2.6-2.6c0-2 1.7-2.9 2.6-4.6Z"
+    fill="#C89B3C"
+  />
+</svg>
+</file>
+
+<file path="src/components/CardCover.astro">
+---
+import { flagFor } from '../lib/flags';
+
+interface Props {
+  image?: string;
+  imageCredit?: string;
+  country: string;
+  alt: string;
+  /** Tailwind aspect-ratio class */
+  ratio?: string;
+  eager?: boolean;
+}
+
+const { image, imageCredit, country, alt, ratio = 'aspect-[16/10]', eager = false } = Astro.props;
+const flag = flagFor(country);
+
+// Deterministic tint per country: the same country always looks the same, and
+// neighbouring cards in a grid stay visually distinguishable. Used only for the
+// designed fallback — never layered over a real photo.
+const tints = [
+  'from-[#14324e] to-[#0A1B30]',
+  'from-[#1d3f52] to-[#0A1B30]',
+  'from-[#243a5e] to-[#0A1B30]',
+  'from-[#16304a] to-[#0A1B30]',
+  'from-[#1b3a44] to-[#0A1B30]',
+];
+let hash = 0;
+for (const ch of country) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+const tint = tints[hash % tints.length];
+---
+
+<div class={`relative ${ratio} overflow-hidden bg-navy-900`}>
+  {image ? (
+    <>
+      <!-- The wrapper already renders the flag/tint underneath, so hiding a
+           broken image degrades to the designed cover instead of a blank box. -->
+      <div class={`absolute inset-0 bg-gradient-to-br ${tint} pattern-lattice flex items-center justify-center`}>
+        <span class="text-[2.5rem] leading-none opacity-90 select-none" aria-hidden="true">{flag}</span>
+      </div>
+      <img
+        src={image}
+        alt={alt}
+        loading={eager ? 'eager' : 'lazy'}
+        decoding="async"
+        onerror="this.style.display='none'"
+        class="relative w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+      />
+      <!-- Bottom scrim keeps the overlaid country chip legible on any photo -->
+      <div class="absolute inset-0 bg-gradient-to-t from-navy-950/75 via-navy-950/10 to-transparent"></div>
+      <span class="absolute bottom-2 inset-inline-start-2.5 inline-flex items-center gap-1.5 text-xs font-body font-semibold text-white">
+        <span aria-hidden="true">{flag}</span>
+        {country}
+      </span>
+      {imageCredit && (
+        /* Bottom-end: keeps clear of the country chip (bottom-start) and the
+           countdown badge the card overlays at top-end. */
+        <span class="absolute bottom-2 inset-inline-end-2.5 text-[9px] leading-none text-white/60 font-body max-w-[45%] truncate">
+          {imageCredit}
+        </span>
+      )}
+    </>
+  ) : (
+    /* No licensed photo for this institution — a designed country cover rather
+       than a stock/AI image that would misrepresent the real campus. */
+    <div class={`absolute inset-0 bg-gradient-to-br ${tint} pattern-lattice flex flex-col items-center justify-center gap-1.5`}>
+      <span class="text-[2.75rem] leading-none drop-shadow-lg select-none" aria-hidden="true">{flag}</span>
+      <span class="text-[0.8125rem] font-body font-semibold text-white/90">{country}</span>
+    </div>
+  )}
+</div>
+</file>
+
+<file path="src/components/CountdownSeal.astro">
+---
+interface Props {
+  deadline: Date;
+  size?: 'sm' | 'lg';
+}
+const { deadline, size = 'sm' } = Astro.props;
+const iso = deadline.toISOString();
+const dims = size === 'lg' ? 'w-20 h-20 text-2xl' : 'w-14 h-14 text-sm';
+---
+
+<div
+  class={`seal ${dims} rounded-full border-2 border-gold-500 bg-navy-900 text-gold-100 flex flex-col items-center justify-center leading-none shrink-0`}
+  data-deadline={iso}
+  role="img"
+  aria-label="الأيام المتبقية على الموعد النهائي"
+>
+  <span class="days font-display font-black tabular">--</span>
+  <span class="unit text-[9px] font-body text-gold-300 mt-0.5">يوم متبقي</span>
+</div>
+
+<script>
+  function paintSeals(root: ParentNode = document) {
+    const now = Date.now();
+    root.querySelectorAll<HTMLElement>('.seal[data-deadline]').forEach((seal) => {
+      const deadline = new Date(seal.dataset.deadline!).getTime();
+      const rawDays = Math.ceil((deadline - now) / (1000 * 60 * 60 * 24));
+      const label = seal.querySelector<HTMLElement>('.days');
+      const unit = seal.querySelector<HTMLElement>('.unit');
+      if (rawDays < 0) {
+        if (label) label.textContent = '';
+        if (unit) unit.textContent = 'مغلقة حالياً';
+        seal.classList.add('border-navy-200', 'bg-navy-50', 'text-navy-400');
+        seal.classList.remove('border-gold-500', 'bg-navy-900', 'text-gold-100');
+        seal.setAttribute('aria-label', 'انتهى موعد التقديم على هذه المنحة');
+      } else {
+        if (label) label.textContent = rawDays.toLocaleString('ar-EG');
+        if (rawDays <= 7) seal.classList.add('border-closing', 'text-closing');
+      }
+    });
+  }
+  document.addEventListener('astro:page-load', () => paintSeals());
+  paintSeals();
+</script>
+</file>
+
+<file path="src/components/Footer.astro">
+---
+import Logo from './Logo.astro';
+import { social } from '../lib/site';
+---
+
+<footer class="bg-navy-900 text-navy-100 mt-20">
+  <div class="max-w-6xl mx-auto px-5 py-12 grid gap-10 md:grid-cols-3">
+    <div>
+      <div class="mb-4"><Logo height={38} /></div>
+      <p class="text-sm leading-relaxed text-navy-200">
+        دليلك الموثوق للمنح الدراسية الممولة حول العالم، مع مساعدة كاملة في إعداد الملفات
+        والترجمة المعتمدة.
+      </p>
+    </div>
+
+    <div>
+      <p class="font-display font-bold text-sm text-white mb-3">روابط سريعة</p>
+      <ul class="space-y-2 text-sm">
+        <li><a href="/scholarships" class="hover:text-gold-300">المنح الدراسية</a></li>
+        <li><a href="/quiz" class="hover:text-gold-300">اعثر على منحتك</a></li>
+        <li><a href="/#how-it-works" class="hover:text-gold-300">كيف نعمل</a></li>
+      </ul>
+    </div>
+
+    <div>
+      <p class="font-display font-bold text-sm text-white mb-3">تابعنا</p>
+      <ul class="space-y-2 text-sm">
+        {social.map((s) => (
+          <li><a href={s.href} target="_blank" rel="noopener" class="hover:text-gold-300">{s.label}</a></li>
+        ))}
+      </ul>
+    </div>
+  </div>
+
+  <div class="border-t border-navy-700 py-4 text-center text-xs text-navy-300">
+    © {new Date().getFullYear()} منحتي. جميع الحقوق محفوظة.
+  </div>
+</footer>
+</file>
+
+<file path="src/components/HeroIllustration.astro">
+---
+import { flagFor } from '../lib/flags';
+---
+
+<div class="w-full max-w-md mx-auto px-2 sm:px-0">
+  <!-- Outer Glow Container -->
+  <div class="relative bg-gradient-to-b from-navy-800 to-navy-950 border border-white/20 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-2xl">
+    
+    <!-- Top Status Line -->
+    <div class="flex items-center justify-between gap-2 mb-6 pb-4 border-b border-white/10">
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+        <span class="text-xs sm:text-sm font-bold text-white font-body">فلاتر البحث التفاعلية</span>
+      </div>
+      <span class="text-xs font-bold text-gold-300 bg-gold-500/15 border border-gold-500/30 px-3 py-1 rounded-full font-body">
+        تحديث مباشر
+      </span>
+    </div>
+
+    <!-- Active Filter Chips Visual -->
+    <div class="space-y-3 mb-6">
+      <p class="text-xs text-slate-300 font-body font-medium">حدد معاييرك للتصفية السريعة:</p>
+      
+      <div class="flex flex-wrap gap-2">
+        <div class="bg-white/10 hover:bg-white/15 border border-white/20 text-white text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl font-body flex items-center gap-2">
+          <span>{flagFor('ألمانيا')}</span>
+          <span>ألمانيا</span>
+        </div>
+        <div class="bg-white/10 hover:bg-white/15 border border-white/20 text-white text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl font-body flex items-center gap-2">
+          <span>🎓</span>
+          <span>بكالوريوس</span>
+        </div>
+        <div class="bg-gold-500/20 border border-gold-500/40 text-gold-300 text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl font-body flex items-center gap-2">
+          <span>⚡</span>
+          <span>تمويل كامل</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Counter Preview Box -->
+    <div class="bg-navy-900/90 border border-gold-500/30 rounded-2xl p-4 mb-6 text-center">
+      <span class="text-xs text-slate-300 font-body block mb-1">الفرص المتاحة حسب هذه المعايير</span>
+      <span class="text-2xl sm:text-3xl font-display font-black text-gold-400 tracking-tight">14 منحة مفتوحة</span>
+    </div>
+
+    <!-- Direct CTA Launch Button -->
+    <a
+      href="/quiz"
+      class="w-full bg-gold-400 hover:bg-gold-300 active:scale-[0.98] text-navy-950 font-body font-bold text-sm sm:text-base py-4 px-6 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3 text-center touch-manipulation min-h-[52px]"
+    >
+      <span>ابدأ تصفية المنح الآن</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="rotate-180 shrink-0">
+        <path d="M5 12h14M12 5l7 7-7 7"></path>
+      </svg>
+    </a>
+
+  </div>
+</div>
+</file>
+
+<file path="src/components/LeadForm.astro">
+---
+import { whatsappNumber } from '../lib/site';
+
+interface Props {
+  /** What the student was looking at — stored with the lead for context. */
+  context?: string;
+  title?: string;
+  subtitle?: string;
+  /** Rendered on a dark background (e.g. inside the navy CTA band) */
+  tone?: 'light' | 'dark';
+}
+
+const {
+  context = 'عام',
+  title = 'اترك بياناتك ونتواصل معك',
+  subtitle = 'سنراجع حالتك ونرشّح لك المنح الأنسب، ونخبرك بالمستندات المطلوبة — بدون أي رسوم على الاستشارة الأولى.',
+  tone = 'light',
+} = Astro.props;
+
+const dark = tone === 'dark';
+---
+
+<div
+  class:list={[
+    'rounded-2xl border p-6 sm:p-8',
+    dark ? 'bg-white/[0.06] border-white/10' : 'bg-white border-navy-100 shadow-sm',
+  ]}
+  data-lead-root
+  data-wa={whatsappNumber}
+>
+  <!-- Form -->
+  <div data-lead-form-wrap>
+    <h3 class:list={['font-display font-bold text-lg sm:text-xl', dark ? 'text-white' : 'text-navy-900']}>
+      {title}
+    </h3>
+    <p class:list={['mt-2 text-[0.8125rem] sm:text-sm leading-[1.95]', dark ? 'text-navy-100' : 'text-navy-500']}>
+      {subtitle}
+    </p>
+
+    <form data-lead-form class="mt-6 grid sm:grid-cols-2 gap-3.5" novalidate>
+      <input type="hidden" name="context" value={context} />
+      <!-- Honeypot: real users never fill this; bots usually do. -->
+      <input type="text" name="website" tabindex="-1" autocomplete="off" class="hidden" aria-hidden="true" />
+
+      <label class="block">
+        <span class:list={['block text-xs font-body mb-1.5', dark ? 'text-navy-100' : 'text-navy-600']}>
+          الاسم الكامل <span class="text-closing">*</span>
+        </span>
+        <input
+          type="text" name="name" required autocomplete="name"
+          class:list={['lead-input', dark && 'lead-input-dark']}
+          placeholder="مثال: أحمد عبدالله"
+        />
+      </label>
+
+      <label class="block">
+        <span class:list={['block text-xs font-body mb-1.5', dark ? 'text-navy-100' : 'text-navy-600']}>
+          رقم واتساب <span class="text-closing">*</span>
+        </span>
+        <input
+          type="tel" name="phone" required inputmode="tel" autocomplete="tel"
+          class:list={['lead-input', dark && 'lead-input-dark']}
+          placeholder="+9665xxxxxxxx"
+          dir="ltr"
+        />
+      </label>
+
+      <label class="block sm:col-span-2">
+        <span class:list={['block text-xs font-body mb-1.5', dark ? 'text-navy-100' : 'text-navy-600']}>
+          ما الذي تبحث عنه؟ <span class:list={[dark ? 'text-navy-300' : 'text-navy-400']}>(اختياري)</span>
+        </span>
+        <textarea
+          name="message" rows="3"
+          class:list={['lead-input resize-y', dark && 'lead-input-dark']}
+          placeholder="تخصصك، معدلك، والدولة التي تفضلها…"
+        ></textarea>
+      </label>
+
+      <p data-lead-error class="sm:col-span-2 text-[0.8125rem] font-body text-closing" hidden></p>
+
+      <div class="sm:col-span-2 flex flex-col sm:flex-row gap-3 sm:items-center">
+        <button
+          type="submit"
+          data-lead-submit
+          class="bg-gold-500 hover:bg-gold-300 disabled:opacity-60 disabled:cursor-not-allowed text-navy-900 font-body font-bold text-sm px-7 py-3.5 rounded-xl transition-colors"
+        >
+          أرسل بياناتي
+        </button>
+        <span class:list={['text-[0.75rem] font-body leading-[1.8]', dark ? 'text-navy-200' : 'text-navy-400']}>
+          لن نشارك بياناتك مع أي جهة خارجية.
+        </span>
+      </div>
+    </form>
+  </div>
+
+  <!-- Success state -->
+  <div data-lead-success hidden class="text-center py-4">
+    <span class="mx-auto grid place-items-center w-14 h-14 rounded-full bg-live/15 text-live">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 13 4 4L19 7" />
+      </svg>
+    </span>
+    <h3 class:list={['font-display font-bold text-lg mt-4', dark ? 'text-white' : 'text-navy-900']}>
+      وصلتنا بياناتك
+    </h3>
+    <p class:list={['mt-2 text-sm leading-[1.95] max-w-md mx-auto', dark ? 'text-navy-100' : 'text-navy-500']}>
+      سنتواصل معك عبر واتساب قريباً. للتعجيل، يمكنك مراسلتنا مباشرة الآن:
+    </p>
+    <a
+      data-lead-wa
+      href={`https://wa.me/${whatsappNumber}`}
+      target="_blank"
+      rel="noopener"
+      class="mt-5 inline-flex items-center gap-2 bg-live hover:brightness-110 text-white font-body font-bold text-sm px-6 py-3.5 rounded-xl transition-all"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.96 6.45 17.5 2 12.04 2Zm5.8 14.1c-.24.68-1.4 1.3-1.93 1.38-.5.08-1.11.11-1.79-.11-.41-.13-.94-.3-1.62-.6-2.85-1.23-4.71-4.1-4.85-4.29-.14-.19-1.16-1.54-1.16-2.94 0-1.4.73-2.08.99-2.37.26-.28.57-.35.76-.35h.55c.18 0 .41-.07.64.49.24.58.81 2 .88 2.14.07.14.12.31.02.5-.09.19-.14.31-.28.47-.14.16-.29.36-.42.48-.14.14-.28.29-.12.56.16.28.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.28.14.44.12.6-.07.16-.19.68-.79.86-1.06.19-.28.37-.23.62-.14.26.09 1.63.77 1.9.91.28.14.46.21.53.33.07.12.07.68-.17 1.35Z"/>
+      </svg>
+      تابع المحادثة على واتساب
+    </a>
+  </div>
+</div>
+
+<style>
+  .lead-input {
+    @apply w-full rounded-xl border border-navy-100 bg-white px-3.5 py-3 text-sm font-body text-navy-900
+           placeholder:text-navy-300 focus:border-gold-500 focus:outline-none transition-colors;
+  }
+  .lead-input-dark {
+    @apply bg-white/10 border-white/15 text-white placeholder:text-navy-300;
+  }
+  .lead-input[aria-invalid='true'] {
+    @apply border-closing;
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-lead-root]').forEach((root) => {
+    const waNumber = root.dataset.wa ?? '';
+    const form = root.querySelector<HTMLFormElement>('[data-lead-form]');
+    const formWrap = root.querySelector<HTMLElement>('[data-lead-form-wrap]');
+    const success = root.querySelector<HTMLElement>('[data-lead-success]');
+    const errorEl = root.querySelector<HTMLElement>('[data-lead-error]');
+    const submitBtn = root.querySelector<HTMLButtonElement>('[data-lead-submit]');
+    const waLink = root.querySelector<HTMLAnchorElement>('[data-lead-wa]');
+    if (!form || !formWrap || !success || !errorEl || !submitBtn || !waLink) return;
+
+    function fail(msg: string) {
+      errorEl!.textContent = msg;
+      errorEl!.hidden = false;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+
+      const data = new FormData(form);
+      const name = String(data.get('name') ?? '').trim();
+      const phone = String(data.get('phone') ?? '').trim();
+      const message = String(data.get('message') ?? '').trim();
+      const context = String(data.get('context') ?? '');
+
+      const nameEl = form.querySelector<HTMLInputElement>('[name="name"]')!;
+      const phoneEl = form.querySelector<HTMLInputElement>('[name="phone"]')!;
+      nameEl.setAttribute('aria-invalid', String(!name));
+      phoneEl.setAttribute('aria-invalid', String(phone.replace(/\D/g, '').length < 8));
+
+      if (!name) return fail('الرجاء إدخال الاسم الكامل.');
+      if (phone.replace(/\D/g, '').length < 8) return fail('الرجاء إدخال رقم واتساب صحيح.');
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'جارٍ الإرسال…';
+
+      const payload = { name, phone, message, context, page: location.pathname };
+
+      // The lead is delivered by a Cloudflare Pages Function in production.
+      // If that endpoint isn't available (local `astro dev`, or before the
+      // function is configured), we still hand the user off to WhatsApp with a
+      // pre-filled message rather than dropping the lead entirely.
+      try {
+        await fetch('/api/lead', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        /* offline or endpoint missing — fall through to the WhatsApp handoff */
+      }
+
+      const waText =
+        `مرحباً، أنا ${name}.\n` +
+        (context && context !== 'عام' ? `بخصوص: ${context}\n` : '') +
+        (message ? `${message}\n` : '') +
+        `رقمي: ${phone}`;
+      waLink.href = `https://wa.me/${waNumber}?text=${encodeURIComponent(waText)}`;
+
+      formWrap.hidden = true;
+      success.hidden = false;
+      success.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+</script>
+</file>
+
+<file path="src/components/Logo.astro">
+---
+/**
+ * The official Menhati wordmark (gold, transparent background — designed to sit
+ * on the navy navbar/footer). Source of truth is the brand asset in
+ * Menhati-material/logoo.png; `public/images/logo.png` is a trimmed, resized
+ * copy of it. The wordmark already contains the name, so no text is rendered
+ * alongside it.
+ */
+interface Props {
+  /** Rendered height in px. */
+  height?: number;
+  class?: string;
+}
+
+const { height = 40, class: className = '' } = Astro.props;
+---
+
+<img
+  src="/images/logo.png"
+  alt="منحتي"
+  width={Math.round((height * 175) / 120)}
+  height={height}
+  style={`height:${height}px`}
+  class={`w-auto shrink-0 ${className}`}
+  loading="eager"
+  decoding="async"
+/>
+</file>
+
+<file path="src/components/Navbar.astro">
+---
+import Logo from './Logo.astro';
+import { whatsappLink } from '../lib/site';
+
+const waHref = whatsappLink('مرحباً، أرغب بمعرفة المزيد عن المنح الدراسية المتاحة');
+
+const links = [
+  { href: '/', label: 'الرئيسية' },
+  { href: '/scholarships', label: 'المنح الدراسية' },
+  { href: '/quiz', label: 'اعثر على منحتك' },
+  { href: '/#how-it-works', label: 'كيف نعمل' },
+];
+---
+
+<header class="bg-navy-900 text-white sticky top-0 z-40">
+  <nav class="max-w-6xl mx-auto flex items-center justify-between px-5 py-4">
+    <a href="/" class="flex items-center gap-2">
+      <Logo height={42} />
+    </a>
+
+    <ul class="hidden md:flex items-center gap-8 font-body text-sm">
+      {links.map((link) => (
+        <li>
+          <a href={link.href} class="text-navy-100 hover:text-gold-300 transition-colors">
+            {link.label}
+          </a>
+        </li>
+      ))}
+    </ul>
+
+    <a
+      href={waHref}
+      target="_blank"
+      rel="noopener"
+      class="hidden md:inline-block bg-gold-500 text-navy-900 font-body font-semibold text-sm px-4 py-2 rounded hover:bg-gold-300 transition-colors"
+    >
+      تواصل عبر واتساب
+    </a>
+
+    <button
+      id="menu-toggle"
+      class="md:hidden text-white"
+      aria-label="فتح القائمة"
+      aria-expanded="false"
+      aria-controls="mobile-menu"
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" />
+      </svg>
+    </button>
+  </nav>
+
+  <ul id="mobile-menu" class="md:hidden hidden flex-col gap-1 px-5 pb-4 font-body text-sm">
+    {links.map((link) => (
+      <li>
+        <a href={link.href} class="block py-2 text-navy-100">{link.label}</a>
+      </li>
+    ))}
+    <li>
+      <a href={waHref} class="block py-2 text-gold-300 font-semibold">
+        تواصل عبر واتساب
+      </a>
+    </li>
+  </ul>
+</header>
+
+<script>
+  const toggle = document.getElementById('menu-toggle');
+  const menu = document.getElementById('mobile-menu');
+  toggle?.addEventListener('click', () => {
+    const isOpen = menu?.classList.toggle('hidden') === false;
+    toggle.setAttribute('aria-expanded', String(isOpen));
+    menu?.classList.toggle('flex', isOpen);
+  });
+</script>
+</file>
+
+<file path="src/components/ScholarshipCard.astro">
+---
+import CardCover from './CardCover.astro';
+import { statusOf, degreeLabels, formatDeadline, countdownLabel } from '../lib/scholarship';
+
+interface Props {
+  slug: string;
+  title: string;
+  major: string;
+  country: string;
+  university?: string;
+  gpaMin?: number;
+  gpaScale?: '4.0' | '5.0' | '100';
+  awardValue: string;
+  fundingType: 'fully-funded' | 'partial';
+  degreeLevel: 'bachelor' | 'master' | 'phd' | 'diploma';
+  deadline: Date;
+  image?: string;
+  imageCredit?: string;
+  eager?: boolean;
+}
+
+const {
+  slug, title, major, country, university,
+  gpaMin, gpaScale, awardValue, fundingType, degreeLevel,
+  deadline, image, imageCredit, eager,
+} = Astro.props;
+
+const status = statusOf(deadline);
+const countdown = countdownLabel(deadline);
+
+// The countdown sits on the cover as a solid pill — high contrast against any
+// photo, and colour-coded so urgency reads at a glance.
+const countdownStyles: Record<typeof status, string> = {
+  open: 'bg-white text-navy-900',
+  closing: 'bg-closing text-white',
+  closed: 'bg-navy-800/90 text-navy-100',
+};
+---
+
+<article class="group h-full">
+  <a
+    href={`/scholarships/${slug}`}
+    class="flex h-full flex-col bg-white border border-navy-100 rounded-xl overflow-hidden transition-all duration-300 hover:border-gold-500/70 hover:shadow-[0_14px_36px_-14px_rgba(10,27,48,0.32)] hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-500"
+  >
+    <div class="relative">
+      <CardCover
+        image={image}
+        imageCredit={imageCredit}
+        country={country}
+        alt={university ?? title}
+        eager={eager}
+      />
+      <span
+        class={`absolute top-2.5 inset-inline-end-2.5 text-[0.8125rem] font-body font-bold px-3 py-1.5 rounded-lg shadow-sm tabular ${countdownStyles[status]}`}
+      >
+        {countdown}
+      </span>
+    </div>
+
+    <div class="flex flex-1 flex-col p-5">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span
+          class:list={[
+            'text-xs font-body font-bold px-2.5 py-1 rounded-md',
+            fundingType === 'fully-funded' ? 'bg-live/12 text-live' : 'bg-gold-100 text-gold-700',
+          ]}
+        >
+          {fundingType === 'fully-funded' ? 'ممولة بالكامل' : 'تمويل جزئي'}
+        </span>
+        <span class="text-xs font-body font-semibold px-2.5 py-1 rounded-md bg-navy-50 text-navy-600">
+          {degreeLabels[degreeLevel]}
+        </span>
+      </div>
+
+      <!-- min-heights reserve two lines each so titles/summaries of different
+           lengths still line up across a row instead of leaving a dead gap -->
+      <h3 class="font-display font-bold text-navy-900 text-[1.1875rem] leading-[1.6] line-clamp-2 min-h-[3.8rem] group-hover:text-gold-700 transition-colors">
+        {title}
+      </h3>
+
+      <p class="mt-2 text-[0.9375rem] leading-[1.9] text-navy-600 line-clamp-2 min-h-[3.5rem] font-body">
+        {awardValue}
+      </p>
+
+      <!-- Meta pinned to the bottom so cards in a row stay aligned -->
+      <dl class="mt-auto pt-5 space-y-2 text-[0.9375rem] font-body">
+        <div class="flex items-start gap-2.5">
+          <dt class="text-navy-400 shrink-0">التخصص</dt>
+          <dd class="text-navy-800 font-medium line-clamp-1">{major}</dd>
+        </div>
+        {gpaMin && (
+          <div class="flex items-center gap-2.5">
+            <dt class="text-navy-400 shrink-0">أقل معدل</dt>
+            <dd class="text-navy-800 font-medium tabular">{gpaMin} من {gpaScale}</dd>
+          </div>
+        )}
+      </dl>
+
+      <div class="mt-4 pt-4 border-t border-navy-50 flex items-center justify-between gap-2">
+        <span class="inline-flex items-center gap-1.5 text-[0.875rem] text-navy-500 font-body tabular">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" class="shrink-0 text-navy-300">
+            <rect x="3" y="5" width="18" height="16" rx="2" /><path stroke-linecap="round" d="M8 3v4M16 3v4M3 10h18" />
+          </svg>
+          {formatDeadline(deadline)}
+        </span>
+        <span class="text-[0.875rem] font-body font-bold text-gold-700 inline-flex items-center gap-1 shrink-0">
+          التفاصيل
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="transition-transform group-hover:-translate-x-0.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 12H5M11 18l-6-6 6-6" />
+          </svg>
+        </span>
+      </div>
+    </div>
+  </a>
+</article>
+</file>
+
+<file path="src/components/WhatsAppButton.astro">
+---
+import { whatsappLink } from '../lib/site';
+
+interface Props {
+  message?: string;
+  /** Lift above a page's mobile sticky CTA bar so the two don't overlap. */
+  liftOnMobile?: boolean;
+}
+const {
+  message = 'مرحباً، أرغب بمعرفة المزيد عن المنح الدراسية المتاحة',
+  liftOnMobile = false,
+} = Astro.props;
+const href = whatsappLink(message);
+---
+
+<a
+  href={href}
+  target="_blank"
+  rel="noopener"
+  aria-label="تواصل معنا عبر واتساب"
+  class:list={[
+    'fixed left-5 z-50 bg-live text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center hover:scale-105 transition-transform',
+    liftOnMobile ? 'bottom-[5.75rem] lg:bottom-5' : 'bottom-5',
+  ]}
+>
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.96 6.45 17.5 2 12.04 2Zm5.8 14.1c-.24.68-1.4 1.3-1.93 1.38-.5.08-1.11.11-1.79-.11-.41-.13-.94-.3-1.62-.6-2.85-1.23-4.71-4.1-4.85-4.29-.14-.19-1.16-1.54-1.16-2.94 0-1.4.73-2.08.99-2.37.26-.28.57-.35.76-.35h.55c.18 0 .41-.07.64.49.24.58.81 2 .88 2.14.07.14.12.31.02.5-.09.19-.14.31-.28.47-.14.16-.29.36-.42.48-.14.14-.28.29-.12.56.16.28.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.28.14.44.12.6-.07.16-.19.68-.79.86-1.06.19-.28.37-.23.62-.14.26.09 1.63.77 1.9.91.28.14.46.21.53.33.07.12.07.68-.17 1.35Z"/>
+  </svg>
+</a>
+</file>
+
+<file path="src/content/scholarships/aiu-foundation-bachelor-malaysia.md">
+---
+title: "منحة الجامعة الدولية البخارية (AIU) في ماليزيا"
+major: "إدارة الأعمال، الحاسوب، الإعلام، أو التعليم"
+country: "ماليزيا"
+university: "الجامعة الدولية البخارية (Albukhary International University)"
+awardValue: "دعم كامل يشمل الرسوم الدراسية والسكن والوجبات، أو دعم جزئي حسب تقييم الحالة"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["إدارة أعمال واقتصاد", "هندسة وتقنية المعلومات", "إعلام واتصال", "تربية وتعليم"]
+deadline: 2026-07-31
+applyUrl: "https://aiu.edu.my/scholarship/"
+featured: true
+---
+
+منحة دراسية من جامعة غير ربحية في ماليزيا، مخصصة للطلاب الدوليين ذوي الدخل المحدود، وتغطي مسار
+Foundation المؤدي إلى برامج البكالوريوس في إدارة الأعمال، الحاسوب، الإعلام، والتعليم. القبول في
+الجامعة مرتبط بالمنحة مباشرة — لا يوجد نظام دراسة بدون منحة، وكل المقبولين يحصلون على دعم كامل أو
+جزئي.
+
+**آخر موعد للتقديم لدفعة أكتوبر 2026 هو 31 يوليو 2026** — وهي الفرصة الوحيدة لهذا العام، حيث تبدأ
+برامج الـ Foundation والبكالوريوس مرة واحدة فقط سنويًا في أكتوبر.
+
+## الشروط الأساسية
+- العمر بين 17 و20 سنة وقت التقديم (للطلاب الدوليين)
+- أن يكون المتقدم أعزب
+- دخل الأسرة أقل من 300 دولار شهريًا
+- ألا يكون قد سبق لأي فرد من العائلة الحصول على دعم من مؤسسة Albukhary
+- طالب واحد فقط من كل أسرة يمكنه التقديم
+- ألا يكون المتقدم طالبًا نشطًا في جامعة أخرى وقت التقديم
+
+## المراحل
+1. التحقق من الأهلية والمستندات الأكاديمية
+2. مقابلة إلزامية عبر Zoom (فرصة واحدة فقط، بلا استئناف) تقيّم الوضع الاجتماعي والاقتصادي، مهارات
+   التواصل، والقدرة على شرح الـ Personal Statement والدفاع عنه
+
+النتائج تصدر عادة خلال 3 إلى 4 أشهر عبر البريد الإلكتروني.
+
+## المستندات المطلوبة
+- جواز السفر
+- شهادة الثانوية وكشف الدرجات
+- هويات الوالدين
+- إثبات دخل (أو عدم دخل) للأسرة، مترجم إلى الإنجليزية (Verification Letter)
+</file>
+
+<file path="src/content/scholarships/australia-awards-master-australia.md">
+---
+title: "منحة حكومة أستراليا (Australia Awards) للدراسات العليا في أستراليا"
+major: "متعددة التخصصات حسب أولويات التنمية المعلنة لبلد المتقدم"
+country: "أستراليا"
+awardValue: "تغطية كاملة للرسوم الدراسية، بدل معيشة شهري، تذكرة سفر، تأمين صحي، ودعم أكاديمي إضافي"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-04-30
+applyUrl: "https://oasis.dfat.gov.au/"
+featured: false
+---
+
+منحة Australia Awards هي البرنامج الحكومي الأسترالي الرئيسي لتمويل دراسة مواطني عدد من الدول الشريكة النامية في الجامعات الأسترالية، بإشراف وزارة الخارجية والتجارة الأسترالية (DFAT). تغطي المنحة الدراسة بدوام كامل لمرحلتي البكالوريوس والماجستير، مع أولوية للتخصصات التي تخدم أولويات التنمية في بلد المتقدم.
+
+فُتح باب التقديم لدفعة 2027 في 1 فبراير 2026 وأُغلق في 30 أبريل 2026 الساعة 14:00 بتوقيت أستراليا الشرقي (AEST)، وقد أُغلق النظام حاليًا لهذه الدفعة.
+
+## الشروط الأساسية
+- حامل جنسية إحدى الدول الشريكة المؤهلة (تُحدَّد قائمتها من قبل DFAT ضمن صفحة كل دولة على حدة)
+- اختيار تخصص دراسي يتوافق مع أولويات التنمية المعلنة لبلد المتقدم
+- الالتزام بالعودة للإقامة خارج أستراليا لمدة سنتين على الأقل بعد إنهاء المنحة
+- التقديم إلكترونيًا عبر نظام أوايسس (OASIS) الرسمي
+
+## المستندات المطلوبة
+- كشوف الدرجات والشهادات الجامعية
+- إثبات الجنسية
+- إثبات إجادة اللغة الإنجليزية
+- السيرة الذاتية
+- خطاب شخصي (Personal Statement)
+</file>
+
+<file path="src/content/scholarships/brunei-government-bachelor-brunei.md">
+---
+title: "منحة حكومة بروناي (BDGS) للبكالوريوس في بروناي"
+major: "متعدد التخصصات حسب الجامعة والبرنامج"
+country: "بروناي"
+awardValue: "إعفاء كامل من الرسوم الدراسية، تذكرة طيران ذهاب وعودة، بدل شهري وبدل وجبات، سكن جامعي، بدل كتب، وتأمين صحي شامل"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-02-15
+applyUrl: "https://www.mfa.gov.bn/pages/online-bdgs.aspx"
+featured: false
+---
+
+منحة Government of Brunei Darussalam Scholarship (BDGS) هي المنحة الحكومية الرئيسية التي تقدّمها وزارة الخارجية في بروناي للطلاب الدوليين الذين يدرسون في بروناي لأول مرة، وتشمل مستويات الدبلوم والبكالوريوس والماجستير في خمس مؤسسات تعليمية: جامعة بروناي دار السلام (UBD)، الجامعة الإسلامية السلطان شريف علي (UNISSA)، جامعة بروناي التقنية (UTB)، كلية سري بكاوان لإعداد المعلمين (KUPU SB)، ومعهد بروناي التقني (PB). فُتح باب التقديم لدفعة 2026/2027 في 15 ديسمبر 2025 وأُغلق في 15 فبراير 2026.
+
+## الشروط الأساسية
+- ألا يتجاوز عمر المتقدم 25 سنة لمرحلتي الدبلوم والبكالوريوس، أو 35 سنة لمرحلة الماجستير
+- إجادة اللغة الإنجليزية: تقدير Credit في مادة اللغة الإنجليزية بشهادة GCE 'O' Level، أو Grade C في IGCSE، أو IELTS 6.0 فأعلى، أو TOEFL 550 فأعلى
+- أن يكون المتقدم طالبًا دوليًا يدرس في بروناي لأول مرة (لا يشمل مواطني بروناي والمقيمين الدائمين فيها، أو من سبق له الدراسة في مؤسسة تعليمية عليا فيها)
+
+## المستندات المطلوبة
+- جواز سفر ساري
+- شهادة الثانوية العامة أو ما يعادلها
+- إثبات إجادة اللغة الإنجليزية
+</file>
+
+<file path="src/content/scholarships/buv-bachelor-vietnam.md">
+---
+title: "منحة الجامعة البريطانية في فيتنام (BUV) للطلاب الدوليين"
+major: "أي تخصص بكالوريوس أو ماجستير تقدمه الجامعة"
+country: "فيتنام"
+university: "الجامعة البريطانية في فيتنام (British University Vietnam - BUV)"
+awardValue: "منحة Global Pathfinder's: من 25% إلى 100% من الرسوم الدراسية لمدة 6 فصول دراسية، حسب فئة الجنسية والمعدل (Platinum/Gold/Silver/Bronze)"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+gpaMin: 70
+gpaScale: "100"
+deadline: 2026-07-31
+applyUrl: "https://www.buv.edu.vn/scholarships/global-pathfinders-scholarship/"
+featured: false
+image: "/images/universities/buv.jpg"
+imageCredit: "الصورة: StupifPotatota عبر Wikimedia Commons (CC BY-SA 4.0)"
+---
+
+منحة Global Pathfinder's Scholarship من الجامعة البريطانية في فيتنام (BUV)، وهي منحة دولية موجهة للطلاب القادمين من خارج فيتنام للالتحاق ببرامج البكالوريوس أو الدراسات العليا. تُمنح على شكل شرائح من نسبة الرسوم الدراسية حسب الجنسية والمعدل الدراسي، وتتراوح من 25% إلى الإعفاء الكامل من الرسوم لمدة 6 فصول دراسية.
+
+## الشروط الأساسية
+- طالب دولي من خارج فيتنام، أنهى الثانوية العامة أو في الصف الثاني عشر (أو المستوى الجامعي المكافئ لطلبات الماجستير)
+- معدل لا يقل عن 70%
+- شهادة IELTS بمجموع 6.0 وبحد أدنى 5.5 في كل مهارة (أو ما يعادلها)
+- استيفاء متطلبات القبول الخاصة بالبرنامج المطلوب
+- الالتزام بالعمل كسفير طلابي لـ BUV
+
+## المستندات المطلوبة
+- خطاب تحفيزي (Motivation Letter) وفق النموذج المعتمد من الجامعة
+- لقطة شاشة تثبت تقديم طلب القبول الإلكتروني لدى BUV
+- إثبات دفع رسوم التقديم (2 مليون دونغ فيتنامي) ومبلغ الحجز (20 مليون دونغ فيتنامي)
+</file>
+
+<file path="src/content/scholarships/chevening-master-uk.md">
+---
+title: "منحة شيفنينغ (Chevening) للماجستير في بريطانيا"
+major: "أي تخصص متاح لدرجة ماجستير في جامعة بريطانية"
+country: "المملكة المتحدة"
+awardValue: "تغطية كاملة للرسوم الدراسية، بدل معيشة شهري، تذكرة سفر، رسوم التأشيرة، وبدلات وصول ومغادرة"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-10-06
+applyUrl: "https://www.chevening.org/scholarships/"
+featured: true
+---
+
+منحة الحكومة البريطانية الأشهر لبناء القادة والمؤثرين المستقبليين، تموّل عامًا دراسيًا كاملاً لأي
+برنامج ماجستير في جامعة بريطانية بأي تخصص، وليست مقتصرة على تخصص معين.
+
+**الموعد النهائي: 6 أكتوبر 2026 الساعة 11:00 بتوقيت UTC.**
+
+## الشروط الأساسية
+- حامل جنسية دولة مؤهلة لمنحة شيفنينغ
+- خبرة عمل لا تقل عن سنتين (2800 ساعة)
+- حاصل على شهادة بكالوريوس تؤهل للقبول في برنامج ماجستير بريطاني
+- الالتزام بالعودة للوطن لمدة سنتين على الأقل بعد انتهاء المنحة
+- التقديم على 3 برامج جامعية بريطانية مختلفة مؤهلة، والحصول على قبول غير مشروط من إحداها قبل
+  الموعد النهائي المحدد من شيفنينغ
+
+## معايير الاختيار
+القيادة والتأثير، القدرة على بناء العلاقات، خطة مهنية واضحة توضح كيف ستساهم الدراسة في بريطانيا في
+إحداث أثر إيجابي، وجودة خطة الدراسة المقترحة.
+
+## المستندات المطلوبة
+- جواز سفر ساري
+- كشف درجات ومؤهل جامعي
+- إثبات خبرة عمل
+- خطاب قبول غير مشروط من إحدى الجامعات الثلاث المختارة
+</file>
+
+<file path="src/content/scholarships/csc-master-china.md">
+---
+title: "منحة الحكومة الصينية CSC للماجستير في الصين"
+major: "جميع التخصصات"
+country: "الصين"
+awardValue: "تغطية كاملة تشمل الإعفاء من الرسوم الدراسية والسكن الجامعي (أو بدل سكن) والتأمين الصحي الشامل وبدل معيشة شهري"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-02-08
+applyUrl: "https://www.campuschina.org"
+featured: false
+---
+
+منحة مجلس المنح الصيني (China Scholarship Council - CSC) هي البرنامج الحكومي الرسمي للصين لاستقطاب الطلاب الدوليين، وتشمل مستويات البكالوريوس والماجستير والدكتوراه. يوجد مساران للتقديم: النوع (A) عبر السفارة الصينية في بلد الطالب، والنوع (B) مباشرة عبر الجامعة الصينية المستهدفة، وكلا المسارين يتم عبر النظام الإلكتروني الموحد campuschina.org.
+
+## الشروط الأساسية
+- التقديم عبر النظام الإلكتروني الرسمي على campuschina.org، باختيار النوع (A) عبر السفارة أو النوع (B) عبر الجامعة مباشرة
+- المتقدمون لمرحلة البكالوريوس مطالبون بأداء اختبار CSCA قبل الموعد النهائي للتقديم
+- تختلف المواعيد النهائية الفعلية اختلافاً كبيراً حسب سفارة الصين في بلد الطالب (بالنسبة للنوع A) وحسب الجامعة (بالنسبة للنوع B)؛ الموعد المستخدَم هنا هو من المواعيد الشائعة التي أعلنتها عدة سفارات صينية رسمية لدورة 2026-2027، ويجب تأكيد الموعد الدقيق مع السفارة الصينية في بلد الطالب أو مكتب شؤون الطلاب الدوليين بالجامعة المستهدفة
+</file>
+
+<file path="src/content/scholarships/dad-master-germany.md">
+---
+title: "منحة DAAD للدراسات العليا في ألمانيا"
+major: "الهندسة وعلوم الحاسوب"
+country: "ألمانيا"
+university: "جامعات ألمانية متعددة"
+gpaMin: 3.0
+gpaScale: "4.0"
+awardValue: "تمويل كامل + بدل شهري 934 يورو"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["هندسة وتقنية المعلومات"]
+deadline: 2026-10-15
+applyUrl: "https://www.daad.de"
+featured: true
+---
+
+منحة DAAD الألمانية من أبرز المنح الممولة بالكامل للطلاب الدوليين الراغبين في إكمال دراسات الماجستير في ألمانيا. تغطي المنحة الرسوم الدراسية بالكامل، بالإضافة إلى بدل شهري للمعيشة، وتأمين صحي، وتذكرة سفر.
+
+## الشروط الأساسية
+- معدل تراكمي 3.0 من 4.0 كحد أدنى
+- شهادة بكالوريوس في تخصص ذي صلة
+- إجادة اللغة الإنجليزية أو الألمانية حسب البرنامج
+
+## المستندات المطلوبة
+- خطاب الدافع (SOP)
+- السيرة الذاتية بصيغة أوروبية (Europass)
+- خطابا توصية
+- كشف الدرجات مترجم ومصدّق
+</file>
+
+<file path="src/content/scholarships/debrecen-stipendium-bachelor-hungary.md">
+---
+title: "منحة Stipendium Hungaricum لجامعة ديبريسين في هنغاريا"
+major: "جميع التخصصات المتاحة بالجامعة"
+country: "هنغاريا"
+university: "جامعة ديبريسين (University of Debrecen)"
+awardValue: "تغطية كاملة للرسوم الدراسية + السكن الجامعي + تأمين صحي (البدل الشهري وتفاصيل السكن تُنسّق مباشرة مع الجامعة المضيفة)"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-01-15
+applyUrl: "https://apply.stipendiumhungaricum.hu"
+featured: false
+image: "/images/universities/debrecen.jpg"
+imageCredit: "الصورة: Horváth Árpád عبر Wikimedia Commons (CC BY-SA 2.0)"
+---
+
+جامعة ديبريسين من أكبر الجامعات المستضيفة لبرنامج "Stipendium Hungaricum"، وهو برنامج المنح الحكومي الهنغاري الرسمي (وليس منحة خاصة بالجامعة وحدها)، ويغطي مراحل البكالوريوس، والماجستير المتصل (one-tier)، والماجستير، والدكتوراه، وبرامج غير حاصلة على درجة. الأهلية مرتبطة باتفاقية تعاون ثنائي بين هنغاريا وبلد المتقدم، والترشيح يتم عبر جهة شريكة معتمدة في بلد المتقدم قبل التقديم النهائي.
+
+**الموعد النهائي لدورة 2026-2027: 15 يناير 2026 الساعة 2:00 ظهرًا بتوقيت وسط أوروبا.**
+
+## الشروط الأساسية
+- أن تكون دولة المتقدم ضمن اتفاقيات التعاون الثنائي مع هنغاريا لبرنامج Stipendium Hungaricum
+- الحصول على ترشيح من الجهة الشريكة (Sending Partner) المعتمدة في بلد المتقدم
+- اجتياز امتحان القبول (بحد أدنى 56 من 100 نقطة) بين مارس ومايو 2026
+- عدم حمل الجنسية الهنغارية
+
+## المستندات المطلوبة
+- جواز سفر ساري (يُشترط تقديمه قبل 1 أغسطس في حال الفوز بالمنحة)
+- شهادة طبية وفق النموذج الرسمي المعتمد من البرنامج
+- الشهادات الأكاديمية واللغوية المطلوبة حسب المرحلة الدراسية
+</file>
+
+<file path="src/content/scholarships/diyanet-tdv-bachelor-turkey.md">
+---
+title: "منحة مؤسسة الديانة التركية (TDV) للعلوم الشرعية في تركيا"
+major: "العلوم الشرعية والدراسات الإسلامية واللغة العربية"
+country: "تركيا"
+awardValue: "منحة ممولة بالكامل تشمل الدراسة والإقامة وفق برامج المؤسسة"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["علوم شرعية ودراسات إسلامية"]
+deadline: 2026-02-28
+applyUrl: "https://diyanetburslari.tdv.org"
+featured: false
+---
+
+منحة مؤسسة الديانة التركية (Türkiye Diyanet Vakfı - TDV) هي برنامج منح مستقل عن منحة "تركيا بورسلاري" الحكومية، تشرف عليه مؤسسة الديانة التركية بالتعاون مع وزارة التعليم الوطني ورئاسة الشؤون الدينية ورئاسة الأتراك بالخارج والمجتمعات ذات الصلة. توجَّه المنحة بشكل أساسي للطلاب غير الأتراك الراغبين في دراسة العلوم الشرعية واللغة العربية في تركيا.
+
+## الشروط الأساسية
+- يقدَّم البرنامج عبر ثلاثة مسارات: الثانوية الدولية للأئمة والخطباء (الأناضول)، والبكالوريوس في العلوم الشرعية، والدراسات العليا في العلوم الشرعية
+- التقديم متاح للطلاب غير الأتراك الراغبين بالدراسة في تركيا للعام الدراسي 2026-2027
+- آخر موعد لاستكمال التقديم الإلكتروني كان 28 فبراير 2026
+- التقديم والتفاصيل الكاملة لكل مسار عبر البوابة الرسمية diyanetburslari.tdv.org
+</file>
+
+<file path="src/content/scholarships/dsu-toscana-bachelor-italy.md">
+---
+title: "منحة الحق في الدراسة الجامعية (DSU توسكانا) في إيطاليا"
+major: "جميع التخصصات في جامعات إقليم توسكانا"
+country: "إيطاليا"
+awardValue: "دعم مالي نقدي يختلف حسب الوضع الاقتصادي وحالة السكن + وجبات مجانية + سكن جامعي مجاني للفائزين (أو بمقابل شهري مخفّض لغير الفائزين المؤهلين) + إعفاء من الرسوم الجامعية الإقليمية"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-09-07
+applyUrl: "https://www.dsu.toscana.it/borsa-di-studio"
+featured: false
+image: "/images/universities/dsu-toscana.jpg"
+imageCredit: "الصورة: Sailko عبر Wikimedia Commons (CC BY-SA 3.0) — مبنى رئاسة جامعة فلورنسا (بيازا سان ماركو)"
+---
+
+"DSU" (Diritto allo Studio Universitario) هو نظام دعم "الحق في الدراسة الجامعية" في إيطاليا، ولا يُدار كبرنامج وطني موحّد بل عبر وكالة منفصلة في كل إقليم (مثل EDISU في بيدمونت، وLazioDisco في لاتسيو، وERSU في صقلية) بمواعيد وشروط تختلف من إقليم لآخر. هذا الملف يغطي تحديدًا وكالة **DSU توسكانا**، المسؤولة عن جامعات فلورنسا وبيزا وسيينا وغيرها من مؤسسات التعليم العالي في الإقليم، بصفتها من أفضل النماذج توثيقًا. الطلاب المهتمون بأقاليم أخرى يجب أن يراجعوا موقع وكالة DSU الخاصة بإقليمهم مباشرة.
+
+**دورة 2026-2027: التقديم متاح إلكترونيًا حتى 7 سبتمبر 2026 الساعة 1:00 ظهرًا، وتُعلن النتائج بين 4 و30 نوفمبر 2026.**
+
+## الشروط الأساسية
+- التسجيل أو نية التسجيل في إحدى جامعات توسكانا (فلورنسا، بيزا، سيينا) أو مؤسسات التعليم العالي الأخرى بالإقليم
+- ألا يتجاوز مؤشر الوضع الاقتصادي الإيطالي ISEE الجامعي حد 27,000 يورو، ومؤشر ISPE حد 60,000 يورو (يُحتسب للطلاب غير الإيطاليين عبر "ISEE Parificato")
+- يحق للطلاب الأجانب (من خارج الاتحاد الأوروبي) التقديم بنفس شروط الطلاب الإيطاليين المقيمين بالخارج واللاجئين السياسيين وطالبي اللجوء
+- الحفاظ على حد أدنى من الإنجاز الأكاديمي للاستمرار في الاستفادة من السنة الثانية فصاعدًا
+
+## المستندات المطلوبة
+- إقرار ISEE الجامعي (أو ما يعادله للطلاب الأجانب: "Dichiarazione Sostitutiva Unica")
+- التسجيل والتقديم عبر بوابة Sportello Studente الإلكترونية الرسمية
+</file>
+
+<file path="src/content/scholarships/gist-master-southkorea.md">
+---
+title: "منحة معهد غوانغجو للعلوم والتكنولوجيا (GIST) للماجستير والدكتوراه في كوريا الجنوبية"
+major: "تخصصات علمية وهندسية متعددة (علوم، هندسة، تكنولوجيا)"
+country: "كوريا الجنوبية"
+university: "معهد غوانغجو للعلوم والتكنولوجيا (Gwangju Institute of Science and Technology - GIST)"
+awardValue: "منحة تلقائية كاملة لجميع الطلاب الدوليين المقبولين، تشمل الإعفاء من الرسوم الدراسية، بدل شهري للمعيشة، السكن، التأمين الصحي، ودعم تذكرة الطيران"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["علوم طبيعية وتطبيقية", "هندسة وتقنية المعلومات"]
+deadline: 2026-04-10
+applyUrl: "https://ewww.gist.ac.kr/iadm/main.html"
+featured: false
+image: "/images/universities/gist.jpg"
+imageCredit: "الصورة: Wiki.blurbs عبر Wikimedia Commons (CC BY-SA 4.0)"
+---
+
+منحة GIST مخصصة للطلاب الدوليين في برامج الدراسات العليا (ماجستير، ماجستير متصل بدكتوراه، ودكتوراه) بمعهد غوانغجو للعلوم والتكنولوجيا. تُمنح تلقائيًا لكل طالب دولي يُقبل في المعهد دون تقديم طلب منحة منفصل، وهي مفتوحة لجميع الجنسيات. المعهد لا يقدّم برامج بكالوريوس دولية.
+
+**فترة التقديم لدفعة خريف 2026 كانت من 10 مارس إلى 10 أبريل 2026** (الساعة 10:00 صباحًا حتى الموعد النهائي بتوقيت كوريا)، وأُعلنت نتائجها بحلول 4 يونيو 2026.
+
+## الشروط الأساسية
+- حاصل على درجة البكالوريوس (لطلبات الماجستير) أو الماجستير (لطلبات الدكتوراه) من جامعة معترف بها
+- جنسية غير كورية
+- استيفاء المتطلبات اللغوية والأكاديمية الخاصة بالقسم المطلوب الالتحاق به
+</file>
+
+<file path="src/content/scholarships/gks-undergraduate-southkorea.md">
+---
+title: "منحة الحكومة الكورية للبكالوريوس (Global Korea Scholarship - GKS-U)"
+major: "أي تخصص متاح في الجامعات الكورية المشاركة في البرنامج"
+country: "كوريا الجنوبية"
+awardValue: "تغطية كاملة تشمل الرسوم الدراسية، بدل شهري للمعيشة، تذكرة طيران ذهاب وإياب بالدرجة الاقتصادية، تأمين صحي، ومنحة سنة تحضيرية لتعلم اللغة الكورية"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2025-10-31
+applyUrl: "https://www.studyinkorea.go.kr"
+featured: false
+---
+
+منحة الحكومة الكورية للبكالوريوس (GKS-U)، وهي منحة حكومية تديرها المؤسسة الوطنية الكورية للتعليم الدولي (NIIED)، ومفتوحة للطلاب الدوليين للدراسة في جامعات كورية متعددة. يمكن التقديم عبر مسارين: **مسار السفارة** (Embassy Track) عبر السفارة الكورية في بلد الطالب، أو **مسار الجامعة** (University Track) مباشرة عبر الجامعة المستهدفة.
+
+الموعد أعلاه هو الموعد النهائي لمسار الجامعة لدورة 2026 (30 سبتمبر إلى 31 أكتوبر 2025)؛ أما مسار السفارة فكان موعده النهائي 30 سبتمبر 2025. تجدر الإشارة إلى أن كل سفارة كورية تحدد جدولها الزمني الخاص ضمن هذا الإطار، وقد يختلف الموعد الفعلي حسب بلد المتقدم. لم يُعلن بعد عن مواعيد الدورة القادمة حتى تاريخ إعداد هذا الملف.
+
+## الشروط الأساسية
+- إنهاء الدراسة الثانوية بحلول الموعد المحدد في إعلان الدورة
+- حامل جنسية دولة غير كوريا (ولا يحمل الوالدان الجنسية الكورية)
+- استيفاء الشروط الأكاديمية واللغوية التي يحددها التخصص والجامعة المختارة
+
+## المستندات المطلوبة
+يتم التقديم إلكترونيًا عبر نظام Study in Korea (www.studyinkorea.go.kr)، مع تقديم الشهادات الرسمية وكشوف الدرجات للمركز المختص (GKS Center, NIIED) أو للسفارة الكورية، حسب المسار المختار.
+</file>
+
+<file path="src/content/scholarships/hbku-master-qatar.md">
+---
+title: "منحة جامعة حمد بن خليفة للدراسات العليا (ماجستير ودكتوراه) في قطر"
+major: "مجالات متعددة (العلوم الإنسانية والاجتماعية، القانون، إدارة الأعمال، الصحة، العلوم والهندسة)"
+country: "قطر"
+university: "جامعة حمد بن خليفة (Hamad Bin Khalifa University - HBKU)"
+awardValue: "إعفاء من الرسوم الدراسية يتراوح بين 35% و100% حسب البرنامج والتفوق الأكاديمي، إضافة إلى بدل شهري (منحة معيشية) تقريبي يتراوح بين 4,000 و11,000 ريال قطري للطلاب المتفرغين العاملين كمساعدي بحث أو تدريس، وتذكرة طيران ذهاب وإياب واحدة"
+fundingType: "partial"
+degreeLevel: "master"
+fieldCategories: ["علوم إنسانية واجتماعية", "قانون", "إدارة أعمال واقتصاد", "طب وعلوم صحية", "علوم طبيعية وتطبيقية", "هندسة وتقنية المعلومات"]
+deadline: 2027-02-01
+applyUrl: "https://www.hbku.edu.qa/en/graduate-admissions"
+featured: false
+image: "/images/universities/hbku.jpg"
+imageCredit: "الصورة: Alex Sergeev (asergeev.com) عبر Wikimedia Commons (CC BY-SA 3.0)"
+---
+
+تقدّم جامعة حمد بن خليفة (إحدى مؤسسات مؤسسة قطر) دعمًا ماليًا لطلاب الدراسات العليا يشمل برامج الماجستير والدكتوراه، على شكل إعفاءات من الرسوم الدراسية ومنح معيشية شهرية للطلاب المتميزين. لا يوجد طلب منفصل للمنحة؛ إذ يتم تلقائيًا النظر في المتقدمين المقبولين في برامج الدراسات العليا للحصول على التمويل بحسب التفوق الأكاديمي والحاجة المالية والميزانية المتاحة.
+
+## الشروط الأساسية
+- التقديم والحصول على القبول في أحد برامج الماجستير أو الدكتوراه بجامعة حمد بن خليفة
+- الحفاظ على مستوى أكاديمي جيد طوال فترة الدراسة
+- التفرغ الكامل للدراسة والعمل كمساعد بحث أو تدريس للحصول على البدل الشهري (العاملون بأكثر من 40% من دوام كامل خارج الجامعة غير مؤهلين للبدل)
+</file>
+
+<file path="src/content/scholarships/iccr-bachelor-india.md">
+---
+title: "منحة الحكومة الهندية ICCR للدراسة في الهند"
+major: "جميع التخصصات المتاحة ضمن الجامعات الهندية المشاركة"
+country: "الهند"
+awardValue: "تغطية كاملة تشمل الرسوم الدراسية وبدل معيشة شهري، ضمن أكثر من 130 جامعة ومعهد هندي مشارك"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-04-15
+applyUrl: "http://a2ascholarships.iccr.gov.in"
+featured: false
+---
+
+منحة ICCR هي برنامج المنح الحكومي الرسمي الذي يديره المجلس الهندي للعلاقات الثقافية (Indian Council for Cultural Relations) التابع لوزارة الخارجية الهندية، وتشمل مستويات البكالوريوس والماجستير والدكتوراه والدبلوم في أكثر من 130 جامعة ومعهد هندي. يتم التقديم إلكترونياً عبر بوابة A2A الرسمية، ثم تُستكمل الإجراءات عبر البعثة الدبلوماسية الهندية في بلد الطالب، ولذلك قد يختلف الموعد النهائي الفعلي قليلاً من بلد إلى آخر بحسب السفارة أو القنصلية الهندية المختصة.
+
+## الشروط الأساسية
+- لا يجوز التقديم لحاملي الجنسية الهندية أو بطاقة المواطن الهندي في الخارج (OCI)
+- التقديم عبر بوابة A2A الرسمية (a2ascholarships.iccr.gov.in) ثم عبر البعثة الدبلوماسية الهندية في بلد الطالب
+- الفئة العمرية للبكالوريوس والماجستير غالباً بين 18 و40 عاماً حسب الشروط المعلنة لكل دورة
+- يُنصح بمراجعة السفارة الهندية في بلد الإقامة لتأكيد الموعد النهائي الدقيق، إذ تُدار عملية القبول الأولي عبر كل بعثة دبلوماسية على حدة
+</file>
+
+<file path="src/content/scholarships/isdb-merit-phd.md">
+---
+title: "منحة البنك الإسلامي للتنمية لبرنامج الجدارة للدكتوراه وما بعد الدكتوراه"
+major: "العلوم التطبيقية والتقنية العالية"
+country: "دول متعددة (وفق معايير البنك الإسلامي للتنمية)"
+awardValue: "منحة كاملة تغطي الرسوم الدراسية والبدل الشهري وفق شروط برنامج الجدارة (Merit Scholarship Programme)"
+fundingType: "fully-funded"
+degreeLevel: "phd"
+fieldCategories: ["علوم طبيعية وتطبيقية", "هندسة وتقنية المعلومات"]
+deadline: 2026-01-31
+applyUrl: "https://www.isdb.org/scholarships"
+featured: false
+---
+
+يدير البنك الإسلامي للتنمية (IsDB) عدة برامج منح منفصلة، من أبرزها "برنامج الجدارة" (Merit Scholarship Programme - MSP) الموجه لطلبة الدكتوراه والباحثين في مرحلة ما بعد الدكتوراه في مجالات العلوم التطبيقية والتقنية العالية من الدول الأعضاء في البنك. للبنك أيضاً برامج أخرى منفصلة بمواعيد ومتطلبات مختلفة، منها منحة المجتمعات المسلمة في الدول غير الأعضاء (SPMC) لمرحلة البكالوريوس، ومنحة الماجستير للدول الأقل نمواً الأعضاء في البنك، ويُعلن عن كل برنامج بشكل مستقل عبر البوابة الرسمية.
+
+## الشروط الأساسية
+- موجهة لطلبة الدكتوراه والباحثين في مرحلة ما بعد الدكتوراه في مجالات العلوم التطبيقية والتقنية العالية
+- التقديم حصرياً عبر البوابة الرسمية isdb.org/scholarships دون أي رسوم تقديم
+- الموعد النهائي لتقديم طلبات دورة العام الدراسي 2026-2027 لبرنامج الجدارة (دكتوراه وما بعد الدكتوراه) كان 31 يناير 2026، بحسب إعلان مكتب رئاسة البنك الرسمي
+</file>
+
+<file path="src/content/scholarships/kaist-bachelor-southkorea.md">
+---
+title: "منحة معهد كايست (KAIST) للبكالوريوس في كوريا الجنوبية"
+major: "العلوم والهندسة (لا يوجد تخصص محدد عند الالتحاق؛ يختار الطالب تخصصه لاحقًا)"
+country: "كوريا الجنوبية"
+university: "معهد كوريا المتقدم للعلوم والتكنولوجيا (KAIST)"
+awardValue: "إعفاء كامل من الرسوم الدراسية لجميع الطلاب الدوليين المقبولين، تُمنح تلقائيًا دون تقديم طلب منفصل، بالإضافة إلى بدل معيشة شهري وتأمين صحي"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["علوم طبيعية وتطبيقية", "هندسة وتقنية المعلومات"]
+deadline: 2027-01-14
+applyUrl: "https://admission.kaist.ac.kr/intl-undergraduate"
+featured: false
+image: "/images/universities/kaist.jpg"
+imageCredit: "الصورة: Revi عبر Wikimedia Commons (CC BY 2.0 KR)"
+---
+
+منحة KAIST للطلاب الدوليين تُمنح تلقائيًا لكل طالب أجنبي يُقبل في برنامج البكالوريوس بالمعهد، دون الحاجة لتقديم طلب منحة منفصل — يكفي اختيار "KAIST Scholarship" كمصدر تمويل عند التقديم للقبول. المعهد لا يطبّق نظام تحويل من جامعات أخرى، فيُقبل جميع الطلاب كسنة أولى بغضّ النظر عن أي دراسة سابقة.
+
+الموعد أعلاه (14 يناير 2027، الساعة 6:00 مساءً بتوقيت كوريا) هو موعد مسار **الالتحاق العادي (Regular Admission)** لدفعة 2027. يوجد أيضًا مسار **الالتحاق المبكر (Early Admission)** بفترة تقديم من 22 سبتمبر إلى 22 أكتوبر 2026.
+
+## الشروط الأساسية
+- حامل جنسية أجنبية (لا يجوز أن يكون أحد الوالدين مواطنًا كوريًا)
+- إنهاء الثانوية العامة أو ما يعادلها بحلول 31 أغسطس 2026 (لدفعة الخريف) أو 28 فبراير 2026 (لدفعة الربيع)
+- عدم وجود نظام قبول للطلبة المحوَّلين؛ يُقبل الجميع كطلاب سنة أولى
+</file>
+
+<file path="src/content/scholarships/kazakhstan-government-bachelor-kazakhstan.md">
+---
+title: "منحة الحكومة الكازاخستانية للطلاب الأجانب في كازاخستان"
+major: "جميع التخصصات المتاحة ضمن الجامعات الكازاخستانية المشاركة"
+country: "كازاخستان"
+awardValue: "منحة حكومية تغطي الرسوم الدراسية وبدل المعيشة، بواقع 490 مقعداً للبكالوريوس و50 مقعداً للماجستير و10 مقاعد للدكتوراه"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-05-31
+applyUrl: "https://www.bolashak.gov.kz/en/scholarship-program"
+featured: false
+---
+
+منحة حكومة كازاخستان الموجهة للطلاب الأجانب هي برنامج منفصل تماماً عن منحة "بولاشاك" الشهيرة المخصصة حصرياً لمواطني كازاخستان. هذا البرنامج، الذي تديره شركة "مركز البرامج الدولية" التابعة لوزارة العلم والتعليم العالي الكازاخستانية، مخصص للطلاب من الجنسيات الأخرى (بمن فيهم ذوو الأصول الكازاخستانية غير الحاصلين على الجنسية) للدراسة في الجامعات الكازاخستانية على مستوى البكالوريوس والماجستير والدكتوراه.
+
+## الشروط الأساسية
+- مخصصة للطلاب الأجانب فقط (غير حاملي الجنسية الكازاخستانية)
+- التقديم إلكترونياً عبر بوابة Study In الرسمية، خلال الفترة من 30 مارس حتى 31 مايو 2026 (الساعة 23:59 بتوقيت أستانا)
+- إتمام القبول والمنحة في طلب واحد دون الحاجة لعرض قبول مسبق من الجامعة
+- يشترط شهادة دراسية سابقة بمعدل "جيد" فأعلى، مع كشف درجات مترجم ومصدق إلى الكازاخستانية أو الروسية أو الإنجليزية
+
+## المستندات المطلوبة
+- وثيقة إثبات الهوية (جواز سفر أو وثيقة لاجئ)
+- كشف الدرجات/الشهادة الدراسية السابقة مترجمة ومصدقة
+- مقال تحفيزي (خطاب دافع)
+- خطاب توصية واحد على الأقل من مؤسسة تعليمية أو جهة عمل
+- شهادة طبية تثبت اللياقة للسفر وخلو من فيروس نقص المناعة
+</file>
+
+<file path="src/content/scholarships/knb-bachelor-indonesia.md">
+---
+title: "منحة الحكومة الإندونيسية KNB للبكالوريوس والدراسات العليا في إندونيسيا"
+major: "جميع التخصصات"
+country: "إندونيسيا"
+awardValue: "تمويل كامل يشمل الرسوم الدراسية، وبدل معيشة شهري، وتأمين صحي، وتذكرة طيران ذهاب وإياب، ودورة تمهيدية لتعلم اللغة الإندونيسية"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-03-31
+applyUrl: "https://knb.kemdiktisaintek.go.id/"
+featured: false
+---
+
+منحة "كميتراءان نيغارا بيركمبانغ" (KNB) هي منحة حكومية إندونيسية ممولة بالكامل، تقدمها وزارة التعليم العالي والعلوم والتكنولوجيا الإندونيسية (Kemdiktisaintek) لطلاب من الدول النامية الشريكة للبرنامج. تتيح المنحة الدراسة في أكثر من 45 جامعة إندونيسية مشاركة، وتغطي مرحلة البكالوريوس بالإضافة إلى الماجستير والدكتوراه ضمن نفس آلية التقديم. فُتح باب التسجيل لدورة 2026 من 2 فبراير حتى 31 مارس 2026.
+
+## الشروط الأساسية
+- أن يكون المتقدم من إحدى الدول النامية المشمولة ببرنامج الشراكة
+- التقديم لأحد المستويات الدراسية: البكالوريوس أو الماجستير أو الدكتوراه
+- الحصول على القبول في إحدى الجامعات الإندونيسية المشاركة في البرنامج
+</file>
+
+<file path="src/content/scholarships/limerick-goi-master-ireland.md">
+---
+title: "منحة الحكومة الأيرلندية (GOI-IES) في جامعة ليمريك بأيرلندا"
+major: "11 برنامج ماجستير محدد بالجامعة، بالإضافة إلى جميع تخصصات الدكتوراه"
+country: "أيرلندا"
+university: "جامعة ليمريك (University of Limerick)"
+awardValue: "إعفاء كامل من رسوم الدراسة والتسجيل (باستثناء رسوم التقديم البالغة 50 يورو وغير قابلة للاسترداد)"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-03-12
+applyUrl: "https://www.ul.ie/gps/international-student/scholarships-international-students/government-of-ireland-scholarship"
+featured: false
+image: "/images/universities/limerick.jpg"
+imageCredit: "الصورة: Rorser عبر Wikimedia Commons (CC BY-SA 3.0)"
+---
+
+منحة "Government of Ireland International Education Scholarship" (GOI-IES) هي برنامج حكومي أيرلندي رسمي تشارك فيه جامعة ليمريك، ويستهدف طلاب الدراسات العليا (مستوى NFQ 9 و10) في 11 برنامج ماجستير محدد، بالإضافة إلى جميع تخصصات الدكتوراه بالجامعة. لا يوجد طلب منفصل للمنحة — يُنظر تلقائيًا في أهلية كل متقدم عند تقديمه على البرنامج الأكاديمي المؤهل.
+
+**الموعد النهائي لدورة 2026: يُفتح الباب في 29 يناير 2026، وآخر موعد للتقديم هو 12 مارس 2026 الساعة 5:00 مساءً بتوقيت أيرلندا.**
+
+## الشروط الأساسية
+- حامل جنسية من خارج الاتحاد الأوروبي/المنطقة الاقتصادية الأوروبية وسويسرا والمملكة المتحدة
+- الحصول على قبول مشروط أو غير مشروط في أحد برامج الماجستير الـ11 المؤهلة أو أي تخصص دكتوراه بالجامعة
+- لا حاجة لتقديم طلب منفصل للمنحة — يتم النظر فيها تلقائيًا بعد التقديم الأكاديمي
+</file>
+
+<file path="src/content/scholarships/mext-master-japan.md">
+---
+title: "منحة الحكومة اليابانية MEXT الممولة بالكامل للماجستير في اليابان"
+major: "جميع التخصصات المرتبطة بتخصص البكالوريوس السابق للطالب"
+country: "اليابان"
+awardValue: "إعفاء كامل من رسوم التسجيل والاختبار والدراسة + بدل شهري 144,000 ين ياباني لطلاب الماجستير النظاميين (143,000 ين خلال فترة الإعداد اللغوي التحضيرية) + تذكرة طيران ذهاب وإياب من بلد الإقامة إلى اليابان"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-05-21
+applyUrl: "https://www.studyinjapan.go.jp"
+featured: false
+---
+
+منحة الحكومة اليابانية MEXT (منحة مونبوكاغاكوشو) هي المنحة الرسمية لوزارة التعليم والثقافة والرياضة والعلوم والتكنولوجيا اليابانية، وتشمل مسار "طلاب البحث" (Research Student) المؤدي إلى درجتي الماجستير والدكتوراه في الجامعات اليابانية. يتم التقديم عبر السفارة اليابانية في بلد الطالب (مسار التوصية عبر السفارة)، ونظراً لأن كل بعثة دبلوماسية يابانية تحدد موعدها النهائي الخاص لاستلام المستندات، فإن التاريخ المذكور هنا هو من التواريخ الشائعة التي أُعلنت لدورة 2027، ويجب على المتقدم تأكيد الموعد الدقيق مع السفارة اليابانية في بلده تحديداً، إذ تبدأ فترة استلام الطلبات عادة في منتصف أبريل من كل عام.
+
+## الشروط الأساسية
+- أن يحمل المتقدم جنسية دولة لها علاقات دبلوماسية مع اليابان
+- تاريخ الميلاد في 2 أبريل 1992 أو بعده (بحسب إرشادات دورة 2027 الرسمية)
+- حاصل على 16 عاماً من التعليم النظامي خارج اليابان (عادة درجة بكالوريوس أو ما يعادلها)، أو مؤهل للقبول في برنامج ماجستير أو دكتوراه بجامعة يابانية
+- التقديم عبر السفارة اليابانية في بلد الطالب فقط، ولا يُقبل التقديم المباشر للجامعة في هذا المسار
+
+## المستندات المطلوبة
+- استمارة التقديم الرسمية لدورة 2027
+- استمارة تفضيل التخصيص الجامعي
+- خطة الدراسة والبحث
+- كشف درجات معتمد من الجامعة عن جميع سنوات الدراسة
+- شهادة تخرج أو إفادة قيد/تخرج متوقع
+- خطاب توصية من رئيس الجامعة أو المشرف الأكاديمي
+- شهادة طبية بالنموذج الرسمي المعتمد لعام 2027
+</file>
+
+<file path="src/content/scholarships/mis-master-malaysia.md">
+---
+title: "منحة الحكومة الماليزية الدولية (MIS) للماجستير في ماليزيا"
+major: "متعدد التخصصات حسب البرنامج والجامعة الماليزية المستضيفة"
+country: "ماليزيا"
+awardValue: "تغطية كاملة للرسوم الدراسية بالإضافة إلى بدل معيشة شهري، تذكرة طيران، وتأمين صحي"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-04-03
+applyUrl: "https://biasiswa.mohe.gov.my/INTER/index.php"
+featured: false
+---
+
+منحة Malaysia International Scholarship (MIS) هي المنحة الحكومية الرئيسية التي تقدّمها وزارة التعليم العالي الماليزية للطلاب الدوليين المتفوقين، وتغطي الدراسات العليا بدوام كامل (ماجستير ودكتوراه) في عدد من الجامعات الحكومية والخاصة في ماليزيا. فُتح باب التقديم لدفعة 2026/2027 في 4 مارس 2026 وأُغلق في 3 أبريل 2026.
+
+## الشروط الأساسية
+- الحصول على قبول أو التأهل للتقديم على برنامج ماجستير أو دكتوراه بدوام كامل في إحدى الجامعات الماليزية المشاركة
+- ألا يتجاوز عمر المتقدم 40 سنة لمرحلة الماجستير، أو 45 سنة لمرحلة الدكتوراه
+- إجادة اللغة الإنجليزية (IELTS 6.0 أو ما يعادلها)
+- حمل جنسية إحدى الدول المؤهلة ضمن القائمة التي تحددها وزارة التعليم العالي الماليزية سنويًا
+</file>
+
+<file path="src/content/scholarships/nl-scholarship-bachelor-netherlands.md">
+---
+title: "منحة NL (Holland Scholarship سابقًا) للبكالوريوس والماجستير في هولندا"
+major: "جميع التخصصات، حسب البرنامج والجامعة المشاركة"
+country: "هولندا"
+awardValue: "منحة نقدية بقيمة 5000 يورو تُصرف خلال السنة الأولى من الدراسة (تمويل جزئي، لا تغطي كامل الرسوم الدراسية)"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-02-01
+applyUrl: "https://www.studyinnl.org/finances/nl-scholarship"
+featured: false
+---
+
+منحة حكومية هولندية تموّلها وزارة التعليم والثقافة والعلوم الهولندية بالاشتراك مع الجامعات المشاركة، ويديرها المكتب الوطني للتدويل التعليمي Nuffic. كانت تُعرف سابقًا باسم "Holland Scholarship" وتغيّر اسمها إلى "NL Scholarship" منذ 2023. تُمنح لطلاب البكالوريوس والماجستير بدوام كامل في أكثر من 30 جامعة بحثية وجامعة علوم تطبيقية هولندية.
+
+**ملاحظة مهمة:** لا يوجد موعد نهائي موحّد على مستوى الدولة — كل جامعة مشاركة تحدد موعدها الخاص، غالبًا بين 1 فبراير و1 مايو من كل عام (جامعة غرونينغن وجامعة أوترخت مثلاً حددتا 1 فبراير 2026 لدورة 2026-2027). يجب التأكد من الموعد الدقيق في صفحة الجامعة المستهدفة تحديدًا.
+
+## الشروط الأساسية
+- حامل جنسية من خارج الاتحاد الأوروبي/المنطقة الاقتصادية الأوروبية (Non-EEA)
+- التقديم لبرنامج بكالوريوس أو ماجستير بدوام كامل في إحدى الجامعات الهولندية المشاركة
+- عدم الحصول على مؤهل جامعي سابق من مؤسسة تعليمية هولندية
+</file>
+
+<file path="src/content/scholarships/open-doors-bachelor-russia.md">
+---
+title: "منحة Open Doors الروسية للدراسة في روسيا"
+major: "جميع التخصصات (14 مجالًا دراسيًا، من الطب إلى الذكاء الاصطناعي)"
+country: "روسيا"
+awardValue: "تغطية كاملة للرسوم الدراسية + بدل شهري (يختلف حسب الجامعة المستضيفة) — يتحمل الطالب تكاليف السفر والسكن والتأمين والمعيشة"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-11-01
+applyUrl: "https://od.globaluni.ru/"
+featured: false
+---
+
+مسابقة أولمبياد دولية أطلقتها رابطة "Global Universities" بالتعاون مع الحكومة الروسية لمنح الطلاب الأجانب مقاعد دراسية ممولة بالكامل في الجامعات الروسية، وتغطي مسارات البكالوريوس والماجستير والدكتوراه وما بعد الدكتوراه. القبول يعتمد على اجتياز اختبارات تنافسية إلكترونية بدلًا من التقديم بالملف الأكاديمي فقط.
+
+## الشروط الأساسية
+- التسجيل الإلكتروني عبر المنصة الرسمية od.globaluni.ru قبل 1 نوفمبر 2026
+- اجتياز اختبار القبول الخاص بأحد المجالات الدراسية الـ14 المتاحة
+- اجتياز المرحلة الثانية من التقييم بعد اجتياز الاختبار الأول
+- مسار ما بعد الدكتوراه مخصص فقط لحاملي درجة الدكتوراه
+
+## المستندات المطلوبة
+- خطاب الدافع (Motivation Letter)
+- المستندات التعليمية السابقة
+- جواز سفر ساري
+</file>
+
+<file path="src/content/scholarships/rmit-bachelor-vietnam.md">
+---
+title: "منحة جامعة RMIT فيتنام للتميز الدولي (International Excellence)"
+major: "أي تخصص بكالوريوس تقدمه جامعة RMIT فيتنام"
+country: "فيتنام"
+university: "جامعة RMIT فيتنام (RMIT University Vietnam)"
+awardValue: "25% أو 50% من الرسوم الدراسية، تُصرف طوال مدة البرنامج بالكامل"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+gpaMin: 80
+gpaScale: "100"
+deadline: 2026-08-21
+applyUrl: "https://www.rmit.edu.vn/study-at-rmit/scholarships/international-student-scholarships/international-excellence-scholarships"
+featured: false
+image: "/images/universities/rmit.jpg"
+imageCredit: "الصورة: Prenn عبر Wikimedia Commons (CC BY-SA 3.0)"
+---
+
+منحة International Excellence Scholarship من جامعة RMIT فيتنام، مخصصة للطلاب غير الفيتناميين الملتحقين ببرامج البكالوريوس، وتُمنح بناءً على التفوق الأكاديمي في الثانوية العامة. الموعد أعلاه هو موعد الفصل الثالث لعام 2026 (21 أغسطس 2026 الساعة 5:00 مساءً بتوقيت غرينتش+7)؛ للجامعة مواعيد فصلية أخرى خلال العام (كانت مواعيد الفصلين الأول والثاني لعام 2026 في 19 يناير و4 مايو 2026 وقد انتهت).
+
+## الشروط الأساسية
+- جنسية غير فيتنامية
+- معدل 80% على الأقل في السنة الأخيرة من الثانوية العامة أو ما يعادلها
+- استيفاء متطلبات القبول الخاصة بالبرنامج المطلوب
+- ألا يكون المتقدم طالبًا حاليًا في برنامج بكالوريوس بجامعة RMIT فيتنام
+- الالتحاق الفعلي بالدراسة في نفس الفصل الذي قُدّم له الطلب
+
+## المستندات المطلوبة
+تقديم نموذج طلب المنحة الرسمي بعد الحصول على خطاب قبول (Letter of Offer) من الجامعة، قبل الموعد النهائي.
+</file>
+
+<file path="src/content/scholarships/romania-mfa-bachelor-romania.md">
+---
+title: "منحة الحكومة الرومانية (وزارة الخارجية) للدراسة في رومانيا"
+major: "جميع التخصصات ما عدا الطب وطب الأسنان والصيدلة"
+country: "رومانيا"
+awardValue: "إعفاء من الرسوم الدراسية + بدل شهري + سكن في السكن الجامعي (حسب التوفر) + سنة تحضيرية لتعلم اللغة الرومانية عند الحاجة"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+gpaMin: 70
+gpaScale: "100"
+deadline: 2026-03-31
+applyUrl: "https://scholarships.studyinromania.gov.ro/"
+featured: false
+---
+
+منحة سنوية تقدّمها وزارة الخارجية الرومانية بالتعاون مع وزارة التربية والتعليم لمواطني الدول من خارج الاتحاد الأوروبي، وتغطي مراحل البكالوريوس والماجستير والدكتوراه في الجامعات الرومانية الحكومية. التقديم يتم حصريًا عبر منصة إلكترونية مخصصة.
+
+**دورة 2026-2027: التقديم كان متاحًا من 16 فبراير حتى 31 مارس 2026، وأُعلنت النتائج تقريبًا في 15 يوليو 2026.**
+
+## الشروط الأساسية
+- حامل جنسية دولة من خارج الاتحاد الأوروبي (باستثناء فئات محددة مثل ذوي الأصول الرومانية وأفراد السلك الدبلوماسي والمستفيدين سابقًا من نفس مرحلة الدراسة)
+- معدل لا يقل عن 7 من 10 في آخر مؤهل دراسي (أو ما يعادل تقدير "جيد")
+- برامج البكالوريوس والماجستير تُدرَّس باللغة الرومانية فقط، بينما تتوفر لغات أخرى لبعض برامج الدكتوراه
+- بالنسبة لمرحلة الدكتوراه: يشترط الحصول على موافقة خطية مسبقة من مشرف أكاديمي (مدرسة الدكتوراه) قبل التقديم
+
+## المستندات المطلوبة
+- الشهادات وكشوف الدرجات مترجمة ومصدّقة (Apostille)
+- شهادة الميلاد ونسخة من جواز السفر
+- السيرة الذاتية
+- بالنسبة للدكتوراه: خطاب نوايا وموافقة المشرف الأكاديمي
+</file>
+
+<file path="src/content/scholarships/russia-government-bachelor-russia.md">
+---
+title: "منحة الحكومة الروسية (الكوتا الحكومية) للدراسة في روسيا"
+major: "جميع التخصصات"
+country: "روسيا"
+awardValue: "تغطية كاملة للرسوم الدراسية طوال مدة الدراسة + سنة تحضيرية لتعلم اللغة الروسية عند الحاجة (لا تشمل تذاكر السفر أو التأمين الصحي بشكل موحّد)"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-01-15
+applyUrl: "https://education-in-russia.com/"
+featured: false
+---
+
+منحة حكومية روسية سنوية (الكوتا الحكومية) تديرها وكالة Rossotrudnichestvo بالتعاون مع أكثر من 500 جامعة روسية، وتتيح للطلاب الأجانب الدراسة مجانًا ضمن مراحل البكالوريوس والتخصص والماجستير والدكتوراه. التسجيل يتم إلكترونيًا عبر البوابة الرسمية، ثم تُستكمل الإجراءات عبر مكتب Rossotrudnichestvo أو السفارة الروسية في بلد المتقدم.
+
+**آخر دورة تسجيل مؤكدة كانت من 15 سبتمبر 2025 حتى 15 يناير 2026** (تختلف المواعيد الدقيقة أحيانًا حسب بلد المتقدم، لذا يُنصح بالتأكد من مكتب Rossotrudnichestvo المحلي).
+
+## الشروط الأساسية
+- التسجيل عبر البوابة الرسمية education-in-russia.com ثم إتمام الإجراءات عبر مكتب Rossotrudnichestvo أو السفارة الروسية في بلد المتقدم
+- إتاحة جميع المراحل الدراسية: بكالوريوس، تخصص، ماجستير، دكتوراه
+- المفاضلة والقبول النهائي يتمّان من قبل الجامعة الروسية المستقبِلة بعد ترشيح Rossotrudnichestvo
+</file>
+
+<file path="src/content/scholarships/study-in-iraq-bachelor-iraq.md">
+---
+title: "منحة الحكومة العراقية (Study in Iraq) للبكالوريوس في العراق"
+major: "تخصصات متعددة منها الطب وطب الأسنان والصيدلة والهندسة وتقنية المعلومات والأمن السيبراني وإدارة الأعمال"
+country: "العراق"
+awardValue: "ثلاثة مسارات تمويل: منحة كاملة (إعفاء من الرسوم الدراسية)، منحة نصف ممولة، ومسار على نفقة الطالب الخاصة، بحسب المفاضلة والجامعة"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["طب وعلوم صحية", "هندسة وتقنية المعلومات", "إدارة أعمال واقتصاد"]
+deadline: 2026-09-30
+applyUrl: "https://studyiniraq.scrd-gate.gov.iq"
+featured: false
+---
+
+برنامج "Study in Iraq" هو المبادرة الرسمية لوزارة التعليم العالي والبحث العلمي العراقية لاستقطاب الطلاب العرب والأجانب للدراسة في الجامعات العراقية الحكومية والأهلية. أطلقت الوزارة النسخة الرابعة من البرنامج للعام الدراسي 2026-2027 بمشاركة أكثر من 78 جامعة عراقية، وتضم المنحة ثلاثة مسارات تمويل تتفاوت بين التمويل الكامل والنصفي والدراسة على نفقة الطالب الخاصة.
+
+## الشروط الأساسية
+- موجهة للطلاب العرب والأجانب الراغبين بالدراسة في الجامعات العراقية الحكومية والأهلية
+- التقديم لمرحلة البكالوريوس متاح حتى نهاية سبتمبر 2026 (بينما أُغلق التقديم لمرحلة الدراسات العليا في النسخة الرابعة نهاية يوليو 2026)
+- جواز سفر ساري المفعول لمدة 6 أشهر على الأقل عند التقديم
+- التقديم إلكترونياً بالكامل عبر البوابة الرسمية Study in Iraq
+
+## المستندات المطلوبة
+- جواز سفر ساري المفعول
+- الوثائق الدراسية مترجمة إلى العربية أو الإنجليزية ومصدقة من وزارة الخارجية في بلد الطالب ومن السفارة العراقية
+</file>
+
+<file path="src/content/scholarships/tdtu-bachelor-vietnam.md">
+---
+title: "منحة جامعة تون دوك ثانغ (TDTU) للبكالوريوس في فيتنام"
+major: "أكثر من 50 تخصصًا بالفيتنامية و11 تخصصًا بالإنجليزية"
+country: "فيتنام"
+university: "جامعة تون دوك ثانغ (Ton Duc Thang University - TDTU)"
+awardValue: "من دعم جزئي (50% إلى 75% من الرسوم الدراسية + سكن جامعي مجاني) إلى دعم كامل (100% من الرسوم + سكن مجاني)، حسب المعدل والمستوى اللغوي. البرامج بالفيتنامية تشمل أيضًا إعفاءً كاملاً من رسوم دورة اللغة الفيتنامية"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+gpaMin: 50
+gpaScale: "100"
+deadline: 2026-10-20
+applyUrl: "https://admission.tdtu.edu.vn/en/undergraduate/Scholarships"
+featured: false
+image: "/images/universities/tdtu.jpg"
+imageCredit: "الصورة: Itechtdt عبر Wikimedia Commons (CC BY-SA 4.0)"
+---
+
+منحة دراسية لطلاب البكالوريوس الدوليين في جامعة تون دوك ثانغ بفيتنام، متاحة لكل من البرامج المدرّسة بالإنجليزية (11 تخصصًا) والبرامج المدرّسة بالفيتنامية (51 تخصصًا). تُمنح على شكل دعم جزئي أو كامل حسب المعدل ومستوى اللغة، وتشمل دائمًا السكن الجامعي المجاني.
+
+**فترة التقديم لفصل يناير 2027 هي من 25 أغسطس إلى 20 أكتوبر 2026.** (كانت هناك فترة سابقة لفصل سبتمبر 2026 من 15 أبريل إلى 15 يوليو 2026 وقد انتهت).
+
+## الشروط الأساسية
+- حاصل على شهادة الثانوية العامة (دفعة 2024 أو 2025 أو 2026)
+- معدل الثانوية العامة 5.0/10 على الأقل
+- للبرامج الإنجليزية: IELTS 5.5 على الأقل أو أن تكون اللغة الإنجليزية اللغة الأم
+- للبرامج الفيتنامية: مستوى لغة فيتنامية B2 على الأقل
+- تخصص الصيدلة يتطلب معدل كيمياء 7.0/10 على الأقل
+- تخصصات التصميم تتطلب اجتياز اختبار قدرات خاص بالجامعة
+
+## المستندات المطلوبة
+يتم التقديم عبر البريد الإلكتروني admission.undergraduate@tdtu.edu.vn وفق النموذج المعتمد من مكتب القبول الدولي بالجامعة.
+</file>
+
+<file path="src/content/scholarships/transilvania-academica-master-romania.md">
+---
+title: "منحة Transilvania Academica للماجستير في جامعة ترانسيلفانيا برومانيا"
+major: "جميع التخصصات المتاحة ضمن برامج الماجستير بالجامعة"
+country: "رومانيا"
+university: "جامعة ترانسيلفانيا في براشوف (Transilvania University of Brașov)"
+awardValue: "إعفاء كامل من الرسوم الدراسية (شاملاً رسوم التسجيل والتخرج) + سكن جامعي مجاني طوال العام + بدل شهري 800 ليو روماني (نحو 160 يورو)"
+fundingType: "fully-funded"
+degreeLevel: "master"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-04-10
+applyUrl: "https://tas.unitbv.ro/"
+featured: false
+image: "/images/universities/transilvania.jpg"
+imageCredit: "الصورة: Lucius1978 عبر Wikimedia Commons (CC BY-SA 4.0)"
+---
+
+منحة تنافسية تقدّمها جامعة ترانسيلفانيا في براشوف لطلاب الماجستير الدوليين من خارج الاتحاد الأوروبي والمنطقة الاقتصادية الأوروبية، القادمين لمتابعة برامج الماجستير في الجامعة. الاختيار يعتمد بالكامل على جودة ملف التقديم، دون مقابلة أو اختبار قبول.
+
+**دورة 2026: التقديم كان مفتوحًا من 23 فبراير حتى 10 أبريل 2026، وأُعلنت النتائج في 27 مايو 2026.**
+
+## الشروط الأساسية
+- حامل شهادة بكالوريوس (أو إفادة تخرج مؤقتة) من خارج الاتحاد الأوروبي/المنطقة الاقتصادية الأوروبية
+- تقديم ملف الطلب كاملًا باللغة الإنجليزية
+
+## المستندات المطلوبة
+- سيرة ذاتية توضح الإنجازات
+- خطاب دافع (بحد أقصى صفحة واحدة)
+- ثلاثة خطابات توصية
+- شهادة البكالوريوس أو إفادة تخرج مؤقتة
+</file>
+
+<file path="src/content/scholarships/turkiye-burslari-bachelor-turkey.md">
+---
+title: "منحة تركيا بورسلاري الحكومية للبكالوريوس والدراسات العليا في تركيا"
+major: "جميع التخصصات"
+country: "تركيا"
+awardValue: "دعم مالي شهري + رسوم دراسية + سكن جامعي + تأمين صحي، بالإضافة إلى سنة تحضيرية لتعلم اللغة التركية عند الحاجة"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+deadline: 2026-02-20
+applyUrl: "https://www.turkiyeburslari.gov.tr"
+featured: false
+---
+
+منحة "تركيا بورسلاري" (Türkiye Bursları) هي المنحة الحكومية الرسمية للجمهورية التركية، وتُعد من أكبر برامج المنح الحكومية في العالم من حيث عدد المستفيدين. تفتح المنحة أبوابها سنوياً أمام الطلاب الدوليين من جميع الدول للدراسة في الجامعات التركية على مستويات الدبلوم والبكالوريوس والماجستير والدكتوراه، وتشرف عليها مؤسسة المنح التركية التابعة لرئاسة الجمهورية.
+
+## الشروط الأساسية
+- المنحة مفتوحة للطلاب الدوليين من جميع الجنسيات ولجميع المراحل الدراسية (الدبلوم، البكالوريوس، الماجستير، الدكتوراه)
+- التقديم إلكترونياً بالكامل عبر النظام الرسمي على الرابط tbbs.turkiyeburslari.gov.tr
+- فترة التقديم لدورة عام 2026 كانت من 10 يناير حتى 20 فبراير 2026
+- يتم اختيار الجامعة والتخصص من قبل مؤسسة المنح بعد قبول الطالب، وفق رغباته ونتيجة المفاضلة
+
+منحة تركيا بورسلاري منحة عامة تشمل عشرات الجامعات التركية وليست مقتصرة على جامعة واحدة، ويُعلن عن موعد فتح كل دورة تقديم جديدة عبر الموقع الرسمي.
+</file>
+
+<file path="src/content/scholarships/ums-bachelor-indonesia.md">
+---
+title: "منحة الأولوية الدولية IPS للبكالوريوس في جامعة محمدية سوراكارتا بإندونيسيا"
+major: "جميع التخصصات المتاحة في مرحلة البكالوريوس"
+country: "إندونيسيا"
+university: "جامعة محمدية سوراكارتا (Universitas Muhammadiyah Surakarta - UMS)"
+awardValue: "تمويل كامل يشمل الرسوم الدراسية لثمانية فصول دراسية، وبدل معيشة شهري قدره 1,750,000 روبية إندونيسية، وبدل كتب شهري قدره 50,000 روبية، وتأمين صحي، ورسوم التأشيرة والإقامة، وتذكرة طيران ذهاب وإياب، وفصل دراسي مجاني لتعلم اللغة الإندونيسية"
+fundingType: "fully-funded"
+degreeLevel: "bachelor"
+fieldCategories: ["جميع التخصصات"]
+gpaMin: 75
+gpaScale: "100"
+deadline: 2024-12-31
+applyUrl: "https://www.ums.ac.id/en/scholarship/international-priority-scholarships"
+featured: false
+image: "/images/universities/ums.jpg"
+imageCredit: "الصورة: Yntskr عبر Wikimedia Commons (CC BY-SA 4.0)"
+---
+
+منحة الأولوية الدولية (International Priority Scholarship - IPS) هي منحة ممولة بالكامل تقدمها جامعة محمدية سوراكارتا (UMS) في إندونيسيا لطلاب البكالوريوس الدوليين من خريجي الثانوية العامة في الدول النامية. تغطي المنحة كامل الرسوم الدراسية وبدل المعيشة طوال مدة الدراسة، إضافة إلى مزايا أخرى تسهّل استقرار الطالب في إندونيسيا. تنبيه: الموعد النهائي أدناه هو آخر موعد رسمي مؤكد من الجامعة وقد انتهت الدورة الخاصة به؛ يُرجى مراجعة الصفحة الرسمية لمعرفة موعد الدورة القادمة إن وُجد.
+
+## الشروط الأساسية
+- معدل لا يقل عن 75% في شهادة الثانوية العامة أو ما يعادلها
+- ألا يتجاوز عمر المتقدم 25 عامًا عند التقديم
+- جواز سفر ساري المفعول لمدة 18 شهرًا على الأقل من تاريخ بدء البرنامج
+- أن يكون المتقدم خريج ثانوية عامة من إحدى الدول النامية
+</file>
+
+<file path="src/content/scholarships/unsw-bachelor-australia.md">
+---
+title: "منحة جامعة UNSW سيدني للطلاب الدوليين في أستراليا"
+major: "متعدد التخصصات (يشمل الأعمال والقانون وبرامج أخرى حسب المنحة)"
+country: "أستراليا"
+university: "جامعة نيو ساوث ويلز سيدني (UNSW Sydney)"
+awardValue: "منح تتراوح من 5,000 دولار أسترالي إلى تغطية كاملة للرسوم الدراسية، حسب البرنامج والمنحة المحددة"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["إدارة أعمال واقتصاد", "قانون"]
+deadline: 2026-06-18
+applyUrl: "https://www.scholarships.unsw.edu.au/scholarships/id/1957"
+featured: false
+image: "/images/universities/unsw.jpg"
+imageCredit: "الصورة: J Bar عبر Wikimedia Commons (CC BY-SA 3.0)"
+---
+
+تقدّم جامعة UNSW سيدني مجموعة من المنح للطلاب الدوليين الجدد، بعضها يُمنح تلقائيًا عند القبول (مثل Australia's Global University Award بقيمة 10,000 دولار) وبعضها الآخر يتطلب تقديم طلب منفصل. الموعد أدناه خاص بمنح دفعة Term 3 لعام 2026 (فُتح التقديم في 1 أبريل 2026).
+
+من أبرز المنح التي تتطلب تقديم طلب: منحة International Scientia Coursework (تغطية كاملة للرسوم أو 20,000 دولار سنويًا)، منحة Law & Justice International (10,000 دولار لسنة واحدة)، ومنح Business School International Pathways/International (من 5,000 إلى 15,000 دولار).
+
+## الشروط الأساسية
+- الحصول على قبول في برنامج دراسي مؤهل في UNSW Sydney يبدأ في Term 3 لعام 2026
+- التفوق الأكاديمي، إلى جانب الأنشطة القيادية واللامنهجية والدافع للدراسة في UNSW
+- تقديم جميع المستندات الداعمة المطلوبة؛ الطلبات الناقصة لا تُقيَّم
+</file>
+
+<file path="src/content/scholarships/vnu-is-bachelor-vietnam.md">
+---
+title: "منحة المدرسة الدولية VNU-IS التابعة لجامعة فيتنام الوطنية هانوي"
+major: "إدارة الأعمال الدولية، تحليل بيانات الأعمال، اللغة الإنجليزية، هندسة المعلوماتية والحاسوب، نظم المعلومات الإدارية، المحاسبة والتدقيق"
+country: "فيتنام"
+university: "المدرسة الدولية - جامعة فيتنام الوطنية هانوي (VNU International School - VNU-IS)"
+gpaMin: 2.5
+gpaScale: "4.0"
+awardValue: "منح متدرجة من 25% إلى 100% من الرسوم الدراسية حسب الفئة (Vietnam Scholarship، Hanoi Scholarship، International Students Scholarship)، بالإضافة إلى منحة قبول تعفي من رسوم الفصل الأول لكل من يستوفي شروط القبول الأساسية"
+fundingType: "partial"
+degreeLevel: "bachelor"
+fieldCategories: ["إدارة أعمال واقتصاد", "هندسة وتقنية المعلومات", "علوم إنسانية واجتماعية"]
+deadline: 2026-06-30
+applyUrl: "https://www.is.vnu.edu.vn/en/undergraduate-admission-information-page-for-2022/"
+featured: false
+image: "/images/universities/vnu-is.jpg"
+imageCredit: "الصورة: Diemdtt.vnu عبر Wikimedia Commons (CC BY-SA 4.0)"
+---
+
+منحة دراسية للطلاب الدوليين الملتحقين ببرامج البكالوريوس في المدرسة الدولية التابعة لجامعة فيتنام الوطنية هانوي (VNU-IS). تُمنح على عدة مستويات حسب المعدل ودرجة الآيلتس، وأعلاها يغطي الرسوم الدراسية بالكامل. الموعد أعلاه هو موعد فصل الخريف (سبتمبر)؛ يوجد أيضًا مسار قبول لفصل الربيع (فبراير) بموعد نهائي 30 أكتوبر.
+
+## الشروط الأساسية
+- شهادة ثانوية عامة بمعدل 2.5 من 4.0 على الأقل أو ما يعادله
+- IELTS 5.5 على الأقل (أو ما يعادله) لغير الناطقين بالإنجليزية؛ الفئات التنافسية الأعلى تتطلب درجات أعلى (حتى IELTS 7.0 لمنحة Vietnam Scholarship الكاملة)
+- اجتياز مقابلة القبول (حضوريًا أو عن بُعد)
+- تقديم ملف أعمال (portfolio) للفئات التنافسية
+
+## المستندات المطلوبة
+- شهادة الثانوية العامة وكشف الدرجات موثّقين
+- صورة جواز سفر سارٍ
+- شهادة صحية
+- إثبات القدرة المالية لتغطية سنة دراسية واحدة على الأقل
+- شهادة اللغة الإنجليزية إن وُجدت
+- سيرة ذاتية موثّقة
+</file>
+
+<file path="src/content/config.ts">
+import { defineCollection, z } from 'astro:content';
+
+const scholarships = defineCollection({
+  type: 'content',
+  schema: z.object({
+    title: z.string(),
+    major: z.string(),
+    fieldCategories: z.array(
+      z.enum([
+        'هندسة وتقنية المعلومات',
+        'إدارة أعمال واقتصاد',
+        'طب وعلوم صحية',
+        'علوم طبيعية وتطبيقية',
+        'علوم إنسانية واجتماعية',
+        'قانون',
+        'تربية وتعليم',
+        'إعلام واتصال',
+        'علوم شرعية ودراسات إسلامية',
+        'زراعة وبيئة',
+        'جميع التخصصات',
+      ])
+    ),
+    country: z.string(),
+    university: z.string().optional(),
+    gpaMin: z.number().optional(),
+    // Written by hand as "4.0" but YAML/the CMS may serialize it unquoted as the
+    // number 4 — normalize before validating so CMS-authored entries don't fail.
+    gpaScale: z
+      .preprocess((v) => {
+        if (typeof v === 'number') return v === 100 ? '100' : v.toFixed(1);
+        return v;
+      }, z.enum(['4.0', '5.0', '100']))
+      .default('4.0'),
+    awardValue: z.string(),
+    fundingType: z.enum(['fully-funded', 'partial']),
+    degreeLevel: z.enum(['bachelor', 'master', 'phd', 'diploma']),
+    deadline: z.date(),
+    applyUrl: z.string().url().optional(),
+    featured: z.boolean().default(false),
+    image: z.string().optional(),
+    imageCredit: z.string().optional(),
+  }),
+});
+
+export const collections = { scholarships };
+</file>
+
+<file path="src/layouts/Layout.astro">
+---
+import '../styles/global.css';
+import Navbar from '../components/Navbar.astro';
+import Footer from '../components/Footer.astro';
+import WhatsAppButton from '../components/WhatsAppButton.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+  /** Set on pages that render their own mobile sticky CTA bar, so the floating
+   *  WhatsApp button lifts above it instead of overlapping. */
+  hasMobileCta?: boolean;
+}
+
+const {
+  title,
+  description = 'منحتي — دليلك الموثوق للمنح الدراسية الممولة حول العالم، مع مساعدة كاملة في التقديم والترجمة المعتمدة.',
+  ogImage = '/og-default.png',
+  hasMobileCta = false,
+} = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content={description} />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Tajawal:wght@500;700;900&family=Cairo:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type" content="website" />
+  <meta property="og:locale" content="ar_AR" />
+  <meta property="og:image" content={new URL(ogImage, Astro.site)} />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <title>{title} | منحتي</title>
+</head>
+<body class="min-h-screen flex flex-col">
+  <Navbar />
+  <main class="flex-1">
+    <slot />
+  </main>
+  <Footer />
+  <WhatsAppButton liftOnMobile={hasMobileCta} />
+</body>
+</html>
+</file>
+
+<file path="src/lib/flags.ts">
+export const flags: Record<string, string> = {
+  ألمانيا: '🇩🇪',
+  'المملكة المتحدة': '🇬🇧',
+  ماليزيا: '🇲🇾',
+  تركيا: '🇹🇷',
+  فرنسا: '🇫🇷',
+  اليابان: '🇯🇵',
+  سويسرا: '🇨🇭',
+  'الولايات المتحدة': '🇺🇸',
+  كندا: '🇨🇦',
+  روسيا: '🇷🇺',
+  رومانيا: '🇷🇴',
+  هولندا: '🇳🇱',
+  هنغاريا: '🇭🇺',
+  أيرلندا: '🇮🇪',
+  إيطاليا: '🇮🇹',
+  إندونيسيا: '🇮🇩',
+  قطر: '🇶🇦',
+  أستراليا: '🇦🇺',
+  بروناي: '🇧🇳',
+  فيتنام: '🇻🇳',
+  'كوريا الجنوبية': '🇰🇷',
+  كازاخستان: '🇰🇿',
+  الهند: '🇮🇳',
+  العراق: '🇮🇶',
+  الصين: '🇨🇳',
+  'المملكة العربية السعودية': '🇸🇦',
+  السعودية: '🇸🇦',
+  الكويت: '🇰🇼',
+  نيوزيلندا: '🇳🇿',
+  الإمارات: '🇦🇪',
+  'الإمارات العربية المتحدة': '🇦🇪',
+};
+
+export function flagFor(country: string): string {
+  return flags[country] ?? '🌍';
+}
+</file>
+
+<file path="src/lib/scholarship.ts">
+/**
+ * Shared display helpers for scholarship data.
+ * Kept in one place so cards, listings, the quiz and detail pages all agree on
+ * how a deadline / degree / status is worded — these used to drift apart.
+ */
+
+export const degreeLabels: Record<string, string> = {
+  bachelor: 'بكالوريوس',
+  master: 'ماجستير',
+  phd: 'دكتوراه',
+  diploma: 'دبلوم',
+};
+
+export const fieldCategories = [
+  'هندسة وتقنية المعلومات',
+  'إدارة أعمال واقتصاد',
+  'طب وعلوم صحية',
+  'علوم طبيعية وتطبيقية',
+  'علوم إنسانية واجتماعية',
+  'قانون',
+  'تربية وتعليم',
+  'إعلام واتصال',
+  'علوم شرعية ودراسات إسلامية',
+  'زراعة وبيئة',
+  'جميع التخصصات',
+] as const;
+
+export type ScholarshipStatus = 'open' | 'closing' | 'closed';
+
+/** Whole days from now until `deadline`. Negative once the deadline has passed. */
+export function daysUntil(deadline: Date, now: number = Date.now()): number {
+  return Math.ceil((deadline.valueOf() - now) / 86_400_000);
+}
+
+export function statusOf(deadline: Date, now: number = Date.now()): ScholarshipStatus {
+  const days = daysUntil(deadline, now);
+  if (days < 0) return 'closed';
+  if (days <= 14) return 'closing';
+  return 'open';
+}
+
+export const statusLabels: Record<ScholarshipStatus, string> = {
+  open: 'مفتوحة للتقديم',
+  closing: 'تغلق قريباً',
+  closed: 'مغلقة حالياً',
+};
+
+/** Arabic-Indic formatted date, e.g. ١٥ أكتوبر ٢٠٢٦ */
+export function formatDeadline(deadline: Date): string {
+  return deadline.toLocaleDateString('ar-EG', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+/**
+ * GPA minimums are published on different scales (4.0, 5.0, or percentage),
+ * so everything is normalized to a percentage before any comparison.
+ */
+export function gpaToPercent(value: number, scale: string): number {
+  const max = scale === '100' ? 100 : parseFloat(scale);
+  return (value / max) * 100;
+}
+
+/**
+ * Arabic counted nouns don't work like English: the plural form is only used
+ * for 3–10, and 11+ goes back to the singular. "4 منحة" reads as broken Arabic.
+ */
+export function countScholarships(n: number): string {
+  if (n === 1) return 'منحة واحدة';
+  if (n === 2) return 'منحتان';
+  if (n >= 3 && n <= 10) return `${n} منح`;
+  return `${n} منحة`;
+}
+
+/** Arabic-Indic digits, matching the ar-EG dates used elsewhere. */
+const ar = (n: number) => n.toLocaleString('ar-EG');
+
+/** "يوم واحد" / "يومان" / "٥ أيام" / "٨٢ يوم" — Arabic counted-noun rules. */
+export function daysLabel(n: number): string {
+  if (n === 1) return 'يوم واحد';
+  if (n === 2) return 'يومان';
+  if (n >= 3 && n <= 10) return `${ar(n)} أيام`;
+  return `${ar(n)} يوم`;
+}
+
+/** Short countdown text for the badge shown on each card. */
+export function countdownLabel(deadline: Date, now: number = Date.now()): string {
+  const days = daysUntil(deadline, now);
+  if (days < 0) return 'انتهى التقديم';
+  if (days === 0) return 'ينتهي اليوم';
+  return `متبقٍ ${daysLabel(days)}`;
+}
+</file>
+
+<file path="src/lib/site.ts">
+/**
+ * Single source of truth for contact details and social links.
+ *
+ * ⚠️ The WhatsApp number below is still the scaffold PLACEHOLDER.
+ * Replace `whatsappNumber` with Menhati's real number before going live —
+ * it is used by the floating button, the footer, every scholarship page CTA,
+ * and the lead-capture form.
+ */
+
+/** International format, digits only, no "+" or spaces. */
+export const whatsappNumber = '966500000000';
+
+export const contactEmail = 'info@menhati.com';
+
+export const social = [
+  { label: 'واتساب', href: `https://wa.me/${whatsappNumber}` },
+  { label: 'تيليجرام', href: 'https://t.me/menhati' },
+  { label: 'إنستغرام', href: 'https://instagram.com/menhati' },
+  { label: 'فيسبوك', href: 'https://facebook.com/menhati' },
+  { label: 'يوتيوب', href: 'https://youtube.com/@menhati' },
+];
+
+/** Build a wa.me link with a pre-filled Arabic message. */
+export function whatsappLink(message: string): string {
+  return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+}
+</file>
+
+<file path="src/pages/scholarships/[slug].astro">
+---
+import Layout from '../../layouts/Layout.astro';
+import LeadForm from '../../components/LeadForm.astro';
+import ScholarshipCard from '../../components/ScholarshipCard.astro';
+import { getCollection, type CollectionEntry } from 'astro:content';
+import { flagFor } from '../../lib/flags';
+import { whatsappLink } from '../../lib/site';
+import { degreeLabels, statusOf, statusLabels, formatDeadline, daysUntil, countdownLabel } from '../../lib/scholarship';
+
+export async function getStaticPaths() {
+  const scholarships = await getCollection('scholarships');
+  return scholarships.map((s) => ({
+    params: { slug: s.slug },
+    props: { entry: s },
+  }));
+}
+
+interface Props {
+  entry: CollectionEntry<'scholarships'>;
+}
+
+const { entry } = Astro.props;
+const { data } = entry;
+const { Content } = await entry.render();
+
+const waHref = whatsappLink(`مرحباً، أرغب بالتقديم على منحة: ${data.title}`);
+const flag = flagFor(data.country);
+const deadlineLabel = formatDeadline(data.deadline);
+const status = statusOf(data.deadline);
+const days = daysUntil(data.deadline);
+
+const statusChip: Record<typeof status, string> = {
+  open: 'bg-live/12 text-live',
+  closing: 'bg-closing/12 text-closing',
+  closed: 'bg-navy-100 text-navy-500',
+};
+
+const facts: { label: string; value: string }[] = [
+  { label: 'الدولة', value: `${flag} ${data.country}` },
+  { label: 'المرحلة الدراسية', value: degreeLabels[data.degreeLevel] },
+  { label: 'التخصص', value: data.major },
+  { label: 'قيمة المنحة', value: data.awardValue },
+  ...(data.gpaMin ? [{ label: 'أقل معدل مطلوب', value: `${data.gpaMin} من ${data.gpaScale}` }] : []),
+  ...(data.university ? [{ label: 'الجهة', value: data.university }] : []),
+];
+
+// Related: same country first, then same degree level — open ones only.
+const now = Date.now();
+const pool = (await getCollection('scholarships')).filter(
+  (s) => s.slug !== entry.slug && s.data.deadline.valueOf() >= now
+);
+const related = [
+  ...pool.filter((s) => s.data.country === data.country),
+  ...pool.filter((s) => s.data.country !== data.country && s.data.degreeLevel === data.degreeLevel),
+]
+  .filter((s, i, arr) => arr.findIndex((x) => x.slug === s.slug) === i)
+  .slice(0, 3);
+---
+
+<Layout title={data.title} description={`${data.title} — ${data.awardValue}`} hasMobileCta>
+  <div class="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 pb-28 lg:pb-12">
+    <a
+      href="/scholarships"
+      class="inline-flex items-center gap-1.5 text-xs sm:text-sm text-navy-400 hover:text-gold-700 transition-colors mb-5 font-body font-semibold"
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M11 6l6 6-6 6" />
+      </svg>
+      العودة لكل المنح
+    </a>
+
+    {data.image && (
+      <figure class="relative rounded-2xl overflow-hidden mb-7 aspect-[21/9] bg-navy-900 shadow-sm">
+        <img src={data.image} alt={data.university ?? data.title} class="w-full h-full object-cover" />
+        {data.imageCredit && (
+          /* Attribution is a condition of the CC licences these photos are under */
+          <figcaption class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-navy-950/80 to-transparent px-3 pt-6 pb-2 text-[10px] sm:text-[11px] text-white/80 font-body text-start">
+            {data.imageCredit}
+          </figcaption>
+        )}
+      </figure>
+    )}
+
+    <div class="grid lg:grid-cols-[1fr_320px] gap-8 lg:gap-12 items-start">
+      <!-- ── Main ────────────────────────────────────────────────────── -->
+      <article class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <span class={`text-[11px] font-body font-bold px-2.5 py-1 rounded-md ${statusChip[status]}`}>
+            {status === 'closing' ? `تغلق خلال ${days} يوم` : statusLabels[status]}
+          </span>
+          <span
+            class:list={[
+              'text-[11px] font-body font-bold px-2.5 py-1 rounded-md',
+              data.fundingType === 'fully-funded' ? 'bg-gold-100 text-gold-700' : 'bg-navy-50 text-navy-600',
+            ]}
+          >
+            {data.fundingType === 'fully-funded' ? 'ممولة بالكامل' : 'تمويل جزئي'}
+          </span>
+          <span class="text-[11px] font-body font-semibold px-2.5 py-1 rounded-md bg-navy-50 text-navy-600">
+            {degreeLabels[data.degreeLevel]}
+          </span>
+        </div>
+
+        <h1 class="font-display font-black text-[1.6rem] sm:text-[2rem] lg:text-[2.35rem] leading-[1.35] text-navy-900">
+          {data.title}
+        </h1>
+
+        {data.university && (
+          <p class="mt-2.5 text-navy-500 text-sm font-body">{data.university}</p>
+        )}
+
+        <!-- Mobile fact strip (sidebar is desktop-only) -->
+        <dl class="lg:hidden mt-6 grid grid-cols-2 gap-3">
+          {facts.slice(0, 4).map((f) => (
+            <div class="bg-white border border-navy-100 rounded-xl p-3">
+              <dt class="text-[0.6875rem] text-navy-400 font-body">{f.label}</dt>
+              <dd class="text-[0.8125rem] text-navy-900 font-body font-semibold mt-0.5 leading-[1.7]">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <div class="mt-8 pt-8 border-t border-navy-100 mh-prose">
+          <Content />
+        </div>
+
+        {data.applyUrl && (
+          <a
+            href={data.applyUrl}
+            target="_blank"
+            rel="noopener"
+            class="mt-8 inline-flex items-center gap-2 text-sm font-body font-semibold text-gold-700 hover:text-gold-500 transition-colors"
+          >
+            الموقع الرسمي للمنحة
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14 5h5v5M19 5l-9 9M9 5H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-3" />
+            </svg>
+          </a>
+        )}
+      </article>
+
+      <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+      <aside class="hidden lg:block sticky top-24">
+        <div class="border border-navy-100 rounded-2xl bg-white overflow-hidden shadow-sm">
+          <!-- Server-rendered so it's correct on first paint (the old circular
+               seal showed "--" until JS ran) -->
+          <div
+            class:list={[
+              'px-5 py-5 text-center border-b',
+              status === 'closed' ? 'bg-navy-50 border-navy-100' : 'bg-navy-900 border-navy-900',
+            ]}
+          >
+            <span
+              class:list={[
+                'block text-[0.6875rem] font-body',
+                status === 'closed' ? 'text-navy-500' : 'text-navy-200',
+              ]}
+            >
+              {status === 'closed' ? 'انتهى موعد التقديم' : 'يغلق التقديم بعد'}
+            </span>
+            <span
+              class:list={[
+                'block font-display font-black text-2xl mt-1 tabular',
+                status === 'closing' ? 'text-closing' : status === 'closed' ? 'text-navy-500' : 'text-gold-300',
+              ]}
+            >
+              {status === 'closed' ? statusLabels.closed : countdownLabel(data.deadline).replace('متبقٍ ', '')}
+            </span>
+            <span
+              class:list={[
+                'block text-[0.8125rem] mt-2 font-body tabular',
+                status === 'closed' ? 'text-navy-500' : 'text-navy-100',
+              ]}
+            >
+              {deadlineLabel}
+            </span>
+          </div>
+
+          <dl class="px-5 py-5 flex flex-col gap-3.5">
+            {facts.map((f) => (
+              <div>
+                <dt class="text-[0.6875rem] text-navy-400 font-body">{f.label}</dt>
+                <dd class="text-[0.8125rem] text-navy-900 font-body font-semibold mt-0.5 leading-[1.75]">{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <div class="px-5 pb-5">
+            <a
+              href={waHref}
+              target="_blank"
+              rel="noopener"
+              class="w-full inline-flex items-center justify-center gap-2 bg-gold-500 hover:bg-gold-300 text-navy-900 font-body font-bold text-sm px-5 py-3.5 rounded-xl transition-colors"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.96 6.45 17.5 2 12.04 2Zm5.8 14.1c-.24.68-1.4 1.3-1.93 1.38-.5.08-1.11.11-1.79-.11-.41-.13-.94-.3-1.62-.6-2.85-1.23-4.71-4.1-4.85-4.29-.14-.19-1.16-1.54-1.16-2.94 0-1.4.73-2.08.99-2.37.26-.28.57-.35.76-.35h.55c.18 0 .41-.07.64.49.24.58.81 2 .88 2.14.07.14.12.31.02.5-.09.19-.14.31-.28.47-.14.16-.29.36-.42.48-.14.14-.28.29-.12.56.16.28.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.28.14.44.12.6-.07.16-.19.68-.79.86-1.06.19-.28.37-.23.62-.14.26.09 1.63.77 1.9.91.28.14.46.21.53.33.07.12.07.68-.17 1.35Z"/>
+              </svg>
+              استشارة مجانية عبر واتساب
+            </a>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ── Lead capture ──────────────────────────────────────────────── -->
+    <div class="mt-12 lg:mt-16">
+      <LeadForm
+        context={data.title}
+        title="نساعدك في التقديم على هذه المنحة"
+        subtitle="اترك اسمك ورقم واتساب، وسنراجع أهليتك لهذه المنحة تحديداً، ونخبرك بالمستندات المطلوبة وموعد كل خطوة."
+      />
+    </div>
+
+    <!-- ── Related ───────────────────────────────────────────────────── -->
+    {related.length > 0 && (
+      <section class="mt-14">
+        <h2 class="font-display font-bold text-lg sm:text-xl text-navy-900 mb-5">منح أخرى قد تناسبك</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {related.map((s) => (
+            <ScholarshipCard
+              slug={s.slug}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+            />
+          ))}
+        </div>
+      </section>
+    )}
+  </div>
+
+  <!-- Mobile sticky CTA -->
+  <div class="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-navy-900/95 backdrop-blur-md border-t border-navy-700/80 py-3 px-4 flex items-center justify-between gap-3">
+    <div class="min-w-0">
+      <span class="text-[10px] text-navy-300 block font-body">الموعد النهائي</span>
+      <span class="text-xs font-bold text-white tabular">{deadlineLabel}</span>
+    </div>
+    <a
+      href={waHref}
+      target="_blank"
+      rel="noopener"
+      class="shrink-0 bg-gold-500 text-navy-900 font-body font-bold text-xs px-5 py-2.5 rounded-xl active:scale-95 transition-transform"
+    >
+      استشارة مجانية
+    </a>
+  </div>
+</Layout>
+</file>
+
+<file path="src/pages/scholarships/index.astro">
+---
+import Layout from '../../layouts/Layout.astro';
+import ScholarshipCard from '../../components/ScholarshipCard.astro';
+import { getCollection } from 'astro:content';
+import { degreeLabels, statusOf } from '../../lib/scholarship';
+
+const now = Date.now();
+const all = (await getCollection('scholarships')).sort(
+  (a, b) => a.data.deadline.valueOf() - b.data.deadline.valueOf()
+);
+
+const open = all.filter((s) => s.data.deadline.valueOf() >= now);
+const closed = all
+  .filter((s) => s.data.deadline.valueOf() < now)
+  .sort((a, b) => b.data.deadline.valueOf() - a.data.deadline.valueOf());
+
+const countries = [...new Set(all.map((s) => s.data.country))].sort((a, b) => a.localeCompare(b, 'ar'));
+
+/** Lowercased blob used for client-side text matching. */
+const haystack = (s: (typeof all)[number]) =>
+  [s.data.title, s.data.university ?? '', s.data.country, s.data.major, s.data.awardValue]
+    .join(' ')
+    .toLowerCase();
+---
+
+<Layout
+  title="المنح الدراسية"
+  description="تصفّح جميع المنح الدراسية الممولة الموثّقة من مصادرها الرسمية، مع بحث وفلترة حسب الدولة والمرحلة ونوع التمويل."
+>
+  <section class="max-w-6xl mx-auto px-5 py-10 sm:py-14">
+    <header class="mb-8">
+      <h1 class="font-display font-black text-2xl sm:text-3xl text-navy-900">كل المنح الدراسية</h1>
+      <p class="mt-2.5 text-navy-500 font-body text-sm sm:text-base leading-[1.95] measure">
+        {all.length} منحة موثّقة من مصادرها الرسمية، محدّثة باستمرار. استخدم البحث والفلاتر للوصول لما يناسبك،
+        ثم تواصل معنا لنساعدك في التقديم.
+      </p>
+    </header>
+
+    <!-- ── Search + filters ──────────────────────────────────────────── -->
+    <div class="bg-white border border-navy-100 rounded-2xl p-4 sm:p-5 mb-8 shadow-sm">
+      <label for="search" class="sr-only">ابحث</label>
+      <div class="flex items-center gap-2 bg-navy-50 rounded-xl px-3.5 mb-3">
+        <span class="text-navy-300 shrink-0" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <circle cx="11" cy="11" r="7" /><path stroke-linecap="round" d="m20 20-3.5-3.5" />
+          </svg>
+        </span>
+        <input
+          id="search"
+          type="search"
+          placeholder="ابحث باسم المنحة أو الجامعة أو الدولة…"
+          class="flex-1 min-w-0 bg-transparent py-3 font-body text-sm text-navy-900 placeholder:text-navy-300 focus:outline-none"
+        />
+      </div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+        <select id="filter-country" class="filter-select" aria-label="الدولة">
+          <option value="any">كل الدول</option>
+          {countries.map((c) => <option value={c}>{c}</option>)}
+        </select>
+        <select id="filter-degree" class="filter-select" aria-label="المرحلة الدراسية">
+          <option value="any">كل المراحل</option>
+          {Object.entries(degreeLabels).map(([v, l]) => <option value={v}>{l}</option>)}
+        </select>
+        <select id="filter-funding" class="filter-select" aria-label="نوع التمويل">
+          <option value="any">كل أنواع التمويل</option>
+          <option value="fully-funded">ممولة بالكامل</option>
+          <option value="partial">تمويل جزئي</option>
+        </select>
+        <select id="filter-status" class="filter-select" aria-label="حالة التقديم">
+          <option value="any">المفتوحة والمغلقة</option>
+          <option value="open">المفتوحة فقط</option>
+          <option value="closing">التي تغلق قريباً</option>
+          <option value="closed">المغلقة فقط</option>
+        </select>
+      </div>
+
+      <div class="flex items-center justify-between gap-3 mt-3.5 pt-3.5 border-t border-navy-50">
+        <p id="result-count" class="text-[0.8125rem] font-body text-navy-500 tabular" aria-live="polite"></p>
+        <button
+          id="reset-filters"
+          type="button"
+          class="text-[0.8125rem] font-body text-navy-400 hover:text-gold-700 transition-colors"
+          hidden
+        >
+          إعادة تعيين
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Open ──────────────────────────────────────────────────────── -->
+    <div id="section-open" class="mb-14">
+      <h2 class="font-display font-bold text-lg sm:text-xl text-navy-900 mb-5 flex items-center gap-2.5">
+        <span class="w-2 h-2 rounded-full bg-live"></span>
+        منح مفتوحة للتقديم
+      </h2>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {open.map((s, i) => (
+          <div
+            class="card card-in"
+            style={`animation-delay:${Math.min(i, 8) * 55}ms`}
+            data-country={s.data.country}
+            data-degree={s.data.degreeLevel}
+            data-funding={s.data.fundingType}
+            data-status={statusOf(s.data.deadline, now)}
+            data-search={haystack(s)}
+          >
+            <ScholarshipCard
+              slug={s.slug}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+              eager={i < 3}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <!-- ── Closed ────────────────────────────────────────────────────── -->
+    <div id="section-closed">
+      <h2 class="font-display font-bold text-lg sm:text-xl text-navy-900 mb-1.5 flex items-center gap-2.5">
+        <span class="w-2 h-2 rounded-full bg-navy-300"></span>
+        منح مغلقة حالياً
+      </h2>
+      <p class="text-sm text-navy-500 font-body mb-5 measure leading-[1.95]">
+        انتهى موعد التقديم لهذه الدورة، لكن أغلبها يعود سنوياً في نفس الفترة تقريباً —
+        احفظها الآن لتكون جاهزاً للدورة القادمة.
+      </p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {closed.map((s) => (
+          <div
+            class="card"
+            data-country={s.data.country}
+            data-degree={s.data.degreeLevel}
+            data-funding={s.data.fundingType}
+            data-status="closed"
+            data-search={haystack(s)}
+          >
+            <ScholarshipCard
+              slug={s.slug}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <!-- ── Empty state ───────────────────────────────────────────────── -->
+    <div id="no-results" class="text-center py-16" hidden>
+      <p class="font-display font-bold text-lg text-navy-900">لا توجد منح مطابقة</p>
+      <p class="mt-2 text-sm text-navy-500 font-body measure mx-auto leading-[1.95]">
+        جرّب توسيع معايير البحث، أو تواصل معنا مباشرة عبر واتساب وسنبحث لك يدوياً عن الأنسب لحالتك.
+      </p>
+      <button id="clear-empty" type="button" class="mt-5 bg-navy-900 hover:bg-navy-800 text-white font-body font-semibold text-sm px-6 py-3 rounded-xl transition-colors">
+        إعادة تعيين البحث
+      </button>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .filter-select {
+    @apply w-full rounded-xl border border-navy-100 bg-white px-3 py-2.5 text-[0.8125rem] font-body text-navy-700 focus:border-gold-500 focus:outline-none transition-colors;
+  }
+</style>
+
+<script>
+  const search = document.getElementById('search') as HTMLInputElement;
+  const selects = {
+    country: document.getElementById('filter-country') as HTMLSelectElement,
+    degree: document.getElementById('filter-degree') as HTMLSelectElement,
+    funding: document.getElementById('filter-funding') as HTMLSelectElement,
+    status: document.getElementById('filter-status') as HTMLSelectElement,
+  };
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('.card'));
+  const sectionOpen = document.getElementById('section-open')!;
+  const sectionClosed = document.getElementById('section-closed')!;
+  const noResults = document.getElementById('no-results')!;
+  const countEl = document.getElementById('result-count')!;
+  const resetBtn = document.getElementById('reset-filters') as HTMLButtonElement;
+  const clearEmptyBtn = document.getElementById('clear-empty') as HTMLButtonElement;
+
+  /** Arabic counted nouns: plural only for 3–10, singular again at 11+. */
+  function countLabel(n: number): string {
+    if (n === 1) return 'منحة واحدة مطابقة';
+    if (n === 2) return 'منحتان مطابقتان';
+    if (n >= 3 && n <= 10) return `${n} منح مطابقة`;
+    return `${n} منحة مطابقة`;
+  }
+
+  /** Seed controls from the URL so hero chips like ?country=… deep-link here. */
+  function readUrl() {
+    const p = new URLSearchParams(location.search);
+    if (p.get('q')) search.value = p.get('q')!;
+    for (const [key, el] of Object.entries(selects)) {
+      const v = p.get(key);
+      if (v && [...el.options].some((o) => o.value === v)) el.value = v;
+    }
+  }
+
+  function apply() {
+    const q = search.value.trim().toLowerCase();
+    const country = selects.country.value;
+    const degree = selects.degree.value;
+    const funding = selects.funding.value;
+    const status = selects.status.value;
+
+    let visibleOpen = 0;
+    let visibleClosed = 0;
+
+    for (const card of cards) {
+      const cardStatus = card.dataset.status ?? '';
+      const matchStatus =
+        status === 'any' ||
+        (status === 'open' ? cardStatus !== 'closed' : cardStatus === status);
+
+      const match =
+        (!q || (card.dataset.search ?? '').includes(q)) &&
+        (country === 'any' || card.dataset.country === country) &&
+        (degree === 'any' || card.dataset.degree === degree) &&
+        (funding === 'any' || card.dataset.funding === funding) &&
+        matchStatus;
+
+      card.hidden = !match;
+      if (match) {
+        if (cardStatus === 'closed') visibleClosed++;
+        else visibleOpen++;
+      }
+    }
+
+    sectionOpen.hidden = visibleOpen === 0;
+    sectionClosed.hidden = visibleClosed === 0;
+    const total = visibleOpen + visibleClosed;
+    noResults.hidden = total > 0;
+    countEl.textContent = total > 0 ? countLabel(total) : '';
+
+    const dirty =
+      !!q || country !== 'any' || degree !== 'any' || funding !== 'any' || status !== 'any';
+    resetBtn.hidden = !dirty;
+
+    // Keep the URL shareable without adding history entries on every keystroke.
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (country !== 'any') p.set('country', country);
+    if (degree !== 'any') p.set('degree', degree);
+    if (funding !== 'any') p.set('funding', funding);
+    if (status !== 'any') p.set('status', status);
+    const qs = p.toString();
+    history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+  }
+
+  function reset() {
+    search.value = '';
+    for (const el of Object.values(selects)) el.value = 'any';
+    apply();
+    search.focus();
+  }
+
+  let timer: number;
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(apply, 150);
+  });
+  for (const el of Object.values(selects)) el.addEventListener('change', apply);
+  resetBtn.addEventListener('click', reset);
+  clearEmptyBtn.addEventListener('click', reset);
+
+  readUrl();
+  apply();
+</script>
+</file>
+
+<file path="src/pages/index.astro">
+---
+import Layout from '../layouts/Layout.astro';
+import ScholarshipCard from '../components/ScholarshipCard.astro';
+import { getCollection } from 'astro:content';
+import { flagFor } from '../lib/flags';
+import { countScholarships } from '../lib/scholarship';
+
+const now = Date.now();
+const all = await getCollection('scholarships');
+const openOnes = all.filter((s) => s.data.deadline.valueOf() >= now);
+
+// Homepage shows what's actually actionable: open scholarships, soonest first.
+// Featured ones float to the top but the list is topped up with other open ones
+// so the section never looks empty just because nothing is flagged featured.
+const spotlight = [...openOnes]
+  .sort((a, b) => {
+    if (a.data.featured !== b.data.featured) return a.data.featured ? -1 : 1;
+    return a.data.deadline.valueOf() - b.data.deadline.valueOf();
+  })
+  .slice(0, 6);
+
+const countryCounts = new Map<string, number>();
+for (const s of all) countryCounts.set(s.data.country, (countryCounts.get(s.data.country) ?? 0) + 1);
+const topCountries = [...countryCounts.entries()]
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 12);
+
+const stats = [
+  { value: all.length, label: 'منحة موثّقة' },
+  { value: openOnes.length, label: 'مفتوحة الآن' },
+  { value: countryCounts.size, label: 'دولة حول العالم' },
+  { value: all.filter((s) => s.data.fundingType === 'fully-funded').length, label: 'ممولة بالكامل' },
+];
+
+const quickFilters = [
+  { label: 'ممولة بالكامل', href: '/scholarships?funding=fully-funded' },
+  { label: 'بكالوريوس', href: '/scholarships?degree=bachelor' },
+  { label: 'ماجستير', href: '/scholarships?degree=master' },
+  { label: 'دكتوراه', href: '/scholarships?degree=phd' },
+  { label: 'مفتوحة الآن', href: '/scholarships?status=open' },
+];
+
+const steps = [
+  {
+    n: '01',
+    title: 'استشارة مجانية',
+    body: 'نفهم خلفيتك الأكاديمية وأهدافك عبر واتساب.',
+    icon: 'M8 10h16M8 16h10M22 24l-6 5v-5H10a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4h16a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4h-2Z',
+  },
+  {
+    n: '02',
+    title: 'مطابقة المنح',
+    body: 'نرشح لك المنح الأنسب حسب تخصصك ومعدلك ووجهتك.',
+    icon: 'M22 6a16 16 0 1 0 0 32 16 16 0 0 0 0-32Zm0 8a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z',
+  },
+  {
+    n: '03',
+    title: 'إعداد الملفات',
+    body: 'نكتب خطاب الدافع والسيرة الذاتية ونترجم مستنداتك ترجمة معتمدة.',
+    icon: 'M13 6h13l7 7v23a2 2 0 0 1-2 2H13a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Zm12 0v7h7M17 22h10M17 27h10M17 17h4',
+  },
+  {
+    n: '04',
+    title: 'التقديم والمتابعة',
+    body: 'نقدم الطلب ونتابع معك حتى صدور القرار.',
+    icon: 'M6 24 38 8 30 38l-8-11-11-3Zm14 11 6-8',
+  },
+];
+
+const trustPoints = [
+  {
+    title: 'من المصدر الرسمي فقط',
+    body: 'كل منحة هنا مأخوذة من الموقع الرسمي للجهة المانحة — وزارة، سفارة، أو الجامعة نفسها. لا ننقل عن مواقع تجميع.',
+    icon: 'M12 3 4 6.5v5c0 4.6 3.2 8.9 8 10 4.8-1.1 8-5.4 8-10v-5L12 3Z M9 12l2 2 4-4',
+  },
+  {
+    title: 'مواعيد محدّثة ومراجَعة',
+    body: 'نتحقق من كل موعد نهائي قبل نشره، ونصحّح ما ينشر خطأً في مواقع أخرى.',
+    icon: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
+  },
+  {
+    title: 'نعرض المغلقة أيضاً',
+    body: 'لا نحذف المنح بعد انتهائها. تبقى معروضة بوضوح كي تعرف موعدها المتوقع في الدورة القادمة.',
+    icon: 'M4 6h16M4 12h16M4 18h10',
+  },
+  {
+    title: 'بدون وعود مبالغ فيها',
+    body: 'لا ندّعي ضمان القبول ولا ننشر أرقاماً غير حقيقية. نساعدك في الملف، والقرار يبقى للجهة المانحة.',
+    icon: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
+  },
+];
+---
+
+<Layout title="الرئيسية">
+  <!-- ── Hero: search-first ───────────────────────────────────────────── -->
+  <section class="relative bg-navy-900 text-white overflow-hidden">
+    <div class="absolute inset-0 pattern-lattice opacity-70" aria-hidden="true"></div>
+    <div class="absolute inset-0 bg-radial-glow" aria-hidden="true"></div>
+
+    <div class="relative max-w-4xl mx-auto px-5 py-16 sm:py-24 text-center">
+      <span class="inline-flex items-center gap-2 text-xs sm:text-sm font-body font-semibold text-gold-300 bg-gold-500/10 border border-gold-500/25 rounded-full px-3.5 py-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-gold-300"></span>
+        دليل عربي موثوق للمنح الدراسية
+      </span>
+
+      <h1 class="mt-6 font-display font-black text-3xl sm:text-4xl md:text-[3.25rem] md:leading-[1.25]">
+        منحتك الدراسية <span class="text-gold-300">أقرب مما تتخيل</span>
+      </h1>
+
+      <p class="mt-5 text-navy-100 text-base sm:text-lg leading-[2] max-w-2xl mx-auto">
+        ابحث بين منح ممولة حول العالم، جميعها موثّقة من مصادرها الرسمية،
+        مع فريق يرافقك في الملفات والترجمة حتى القبول.
+      </p>
+
+      <!-- Works without JS: plain GET form to the listing page -->
+      <form action="/scholarships" method="get" class="mt-9 max-w-2xl mx-auto" role="search">
+        <label for="hero-search" class="sr-only">ابحث عن منحة</label>
+        <div class="flex items-stretch gap-2 bg-white rounded-2xl p-2 shadow-2xl">
+          <span class="grid place-items-center ps-3 text-navy-300 shrink-0" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <circle cx="11" cy="11" r="7" /><path stroke-linecap="round" d="m20 20-3.5-3.5" />
+            </svg>
+          </span>
+          <input
+            id="hero-search"
+            type="search"
+            name="q"
+            placeholder="اسم المنحة، الجامعة، أو الدولة…"
+            class="flex-1 min-w-0 bg-transparent text-navy-900 placeholder:text-navy-300 font-body text-sm sm:text-base py-3 focus:outline-none"
+          />
+          <button
+            type="submit"
+            class="shrink-0 bg-navy-900 hover:bg-navy-800 text-white font-body font-bold text-sm px-5 sm:px-7 rounded-xl transition-colors"
+          >
+            ابحث
+          </button>
+        </div>
+      </form>
+
+      <div class="mt-5 flex flex-wrap items-center justify-center gap-2">
+        <span class="text-xs text-navy-300 font-body">الأكثر بحثاً:</span>
+        {quickFilters.map((f) => (
+          <a
+            href={f.href}
+            class="text-xs sm:text-[0.8125rem] font-body text-navy-100 bg-white/10 hover:bg-white/20 border border-white/15 rounded-full px-3 py-1.5 transition-colors"
+          >
+            {f.label}
+          </a>
+        ))}
+      </div>
+
+      <dl class="mt-12 grid grid-cols-2 sm:grid-cols-4 gap-y-6 gap-x-4 border-t border-white/10 pt-8">
+        {stats.map((s) => (
+          <div>
+            <dd class="font-display font-black text-2xl sm:text-3xl text-gold-300 tabular">{s.value}</dd>
+            <dt class="text-xs sm:text-[0.8125rem] text-navy-200 mt-1 font-body">{s.label}</dt>
+          </div>
+        ))}
+      </dl>
+    </div>
+  </section>
+
+  <!-- ── Browse by country ────────────────────────────────────────────── -->
+  {topCountries.length > 0 && (
+    <section class="max-w-6xl mx-auto px-5 py-14 sm:py-16">
+      <div class="flex items-baseline justify-between gap-4 mb-6">
+        <h2 class="font-display font-bold text-xl sm:text-2xl text-navy-900">تصفّح حسب الدولة</h2>
+        <a href="/scholarships" class="text-sm font-body text-gold-700 hover:text-gold-500 shrink-0">كل الدول ←</a>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {topCountries.map(([country, count]) => (
+          <a
+            href={`/scholarships?country=${encodeURIComponent(country)}`}
+            class="group flex items-center gap-3 bg-white border border-navy-100 rounded-xl px-3.5 py-3 hover:border-gold-500/70 hover:shadow-md transition-all"
+          >
+            <span class="text-2xl shrink-0" aria-hidden="true">{flagFor(country)}</span>
+            <span class="min-w-0">
+              <span class="block font-body font-semibold text-[0.8125rem] text-navy-900 truncate group-hover:text-gold-700 transition-colors">
+                {country}
+              </span>
+              <span class="block text-[0.6875rem] text-navy-400 tabular">{countScholarships(count)}</span>
+            </span>
+          </a>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- ── Spotlight scholarships ───────────────────────────────────────── -->
+  {spotlight.length > 0 && (
+    <section class="bg-white border-y border-navy-100">
+      <div class="max-w-6xl mx-auto px-5 py-14 sm:py-16">
+        <div class="flex items-baseline justify-between gap-4 mb-2">
+          <h2 class="font-display font-bold text-xl sm:text-2xl text-navy-900">منح مفتوحة الآن</h2>
+          <a href="/scholarships" class="text-sm font-body text-gold-700 hover:text-gold-500 shrink-0">عرض الكل ←</a>
+        </div>
+        <p class="text-sm text-navy-500 font-body mb-7">مرتّبة حسب الأقرب موعداً — لا تفوّت الفرصة.</p>
+
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {spotlight.map((s, i) => (
+            <div class="card-in" style={`animation-delay:${Math.min(i, 6) * 70}ms`}>
+              <ScholarshipCard
+                slug={s.slug}
+                title={s.data.title}
+                major={s.data.major}
+                country={s.data.country}
+                university={s.data.university}
+                gpaMin={s.data.gpaMin}
+                gpaScale={s.data.gpaScale}
+                awardValue={s.data.awardValue}
+                fundingType={s.data.fundingType}
+                degreeLevel={s.data.degreeLevel}
+                deadline={s.data.deadline}
+                image={s.data.image}
+                imageCredit={s.data.imageCredit}
+                eager={i < 3}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <!-- ── How it works ─────────────────────────────────────────────────── -->
+  <section id="how-it-works" class="py-14 sm:py-16 overflow-hidden">
+    <div class="max-w-6xl mx-auto px-5">
+      <h2 class="font-display font-bold text-xl sm:text-2xl text-navy-900">كيف نعمل</h2>
+      <p class="text-sm text-navy-500 font-body mt-2 mb-12 md:mb-16">أربع خطوات من أول رسالة حتى صدور القرار.</p>
+
+      <ol class="relative grid grid-cols-1 md:grid-cols-4 gap-10 md:gap-6">
+        <div
+          class="pointer-events-none absolute hidden md:block top-7 h-0 border-t-2 border-dashed border-gold-500/40"
+          style="inset-inline: 12.5%;"
+          aria-hidden="true"
+        ></div>
+
+        {steps.map((step, i) => (
+          <li class="group relative flex md:flex-col items-start md:items-center gap-4 md:gap-0 md:text-center">
+            <div class="relative shrink-0">
+              <span class="relative z-10 flex items-center justify-center w-14 h-14 rounded-full bg-navy-900 text-gold-300 ring-4 ring-paper border border-gold-500/50 group-hover:bg-gold-500 group-hover:text-navy-900 transition-colors">
+                <svg width="22" height="22" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d={step.icon} />
+                </svg>
+              </span>
+              {i < steps.length - 1 && (
+                <span
+                  class="md:hidden absolute top-14 start-1/2 -translate-x-1/2 w-0 h-10 border-s-2 border-dashed border-gold-500/40"
+                  aria-hidden="true"
+                ></span>
+              )}
+            </div>
+            <div class="md:mt-4">
+              <span class="font-display font-black text-gold-500 text-sm tabular">{step.n}</span>
+              <h3 class="font-display font-bold text-navy-900 mt-0.5">{step.title}</h3>
+              <p class="text-sm text-navy-600 mt-1 leading-[1.9] md:max-w-[15rem]">{step.body}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <!-- ── Trust / how we verify ────────────────────────────────────────── -->
+  <section class="bg-navy-900 text-white pattern-lattice">
+    <div class="max-w-6xl mx-auto px-5 py-14 sm:py-16">
+      <div class="max-w-2xl">
+        <h2 class="font-display font-bold text-xl sm:text-2xl">لماذا تثق بما تقرأه هنا؟</h2>
+        <p class="mt-3 text-navy-100 text-sm sm:text-base leading-[2]">
+          أكثر ما يضيّع وقت الطالب هو معلومة قديمة أو موعد خاطئ. لذلك وضعنا قواعد واضحة لكل ما يُنشر في هذا الدليل.
+        </p>
+      </div>
+
+      <div class="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        {trustPoints.map((p) => (
+          <div class="bg-white/[0.06] border border-white/10 rounded-xl p-5 hover:border-gold-500/40 transition-colors">
+            <span class="grid place-items-center w-11 h-11 rounded-lg bg-gold-500/15 text-gold-300">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d={p.icon} />
+              </svg>
+            </span>
+            <h3 class="font-display font-bold mt-4 text-[1.0625rem]">{p.title}</h3>
+            <p class="mt-2 text-[0.8125rem] text-navy-100 leading-[1.95]">{p.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Closing CTA ──────────────────────────────────────────────────── -->
+  <section class="max-w-6xl mx-auto px-5 py-14 sm:py-20">
+    <div class="bg-gradient-to-br from-gold-100 to-paper border border-gold-500/30 rounded-2xl p-7 sm:p-12 text-center">
+      <h2 class="font-display font-black text-2xl sm:text-3xl text-navy-900">
+        لست متأكداً أي منحة تناسبك؟
+      </h2>
+      <p class="mt-4 text-navy-600 text-sm sm:text-base leading-[2] max-w-xl mx-auto">
+        أجب عن أربعة أسئلة قصيرة عن تخصصك ومعدلك ووجهتك، وسنعرض لك فوراً المنح التي تنطبق عليك شروطها.
+      </p>
+      <div class="mt-8 flex flex-wrap justify-center gap-3">
+        <a
+          href="/quiz"
+          class="bg-navy-900 hover:bg-navy-800 text-white font-body font-bold px-7 py-3.5 rounded-xl transition-colors"
+        >
+          اعثر على منحتك الآن
+        </a>
+        <a
+          href="/scholarships"
+          class="bg-white border border-navy-200 hover:border-navy-900 text-navy-900 font-body font-semibold px-7 py-3.5 rounded-xl transition-colors"
+        >
+          تصفّح كل المنح
+        </a>
+      </div>
+    </div>
+  </section>
+</Layout>
+</file>
+
+<file path="src/pages/quiz.astro">
+---
+import Layout from '../layouts/Layout.astro';
+import ScholarshipCard from '../components/ScholarshipCard.astro';
+import LeadForm from '../components/LeadForm.astro';
+import { getCollection } from 'astro:content';
+import { degreeLabels, fieldCategories } from '../lib/scholarship';
+
+const all = (await getCollection('scholarships'))
+  .filter((s) => s.data.deadline.valueOf() >= Date.now())
+  .sort((a, b) => a.data.deadline.valueOf() - b.data.deadline.valueOf());
+
+const countries = [...new Set(all.map((s) => s.data.country))].sort((a, b) => a.localeCompare(b, 'ar'));
+---
+
+<Layout
+  title="اعثر على منحتك"
+  description="حدّد تخصصك ومعدلك ووجهتك، وسنعرض لك فوراً المنح الدراسية التي تنطبق عليك شروطها."
+>
+  <section class="max-w-4xl mx-auto px-5 py-10 sm:py-14">
+    <header class="text-center max-w-xl mx-auto">
+      <span class="inline-flex items-center gap-2 text-xs font-body font-semibold text-gold-700 bg-gold-100 rounded-full px-3.5 py-1.5">
+        مطابقة فورية — بدون تسجيل
+      </span>
+      <h1 class="mt-5 font-display font-black text-2xl sm:text-3xl text-navy-900">اعثر على منحتك</h1>
+      <p class="mt-3 text-navy-500 font-body text-sm sm:text-base leading-[1.95]">
+        اختر مرحلتك ومجالك ومعدلك، وسنعرض لك فوراً المنح المفتوحة التي تنطبق عليك شروطها المعلنة.
+      </p>
+    </header>
+
+    <form
+      id="quiz-form"
+      class="mt-9 grid sm:grid-cols-2 gap-4 bg-white border border-navy-100 rounded-2xl p-5 sm:p-6 shadow-sm"
+    >
+      <label class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">المرحلة الدراسية</span>
+        <select name="degreeLevel" class="quiz-input">
+          <option value="any">أي مرحلة</option>
+          {Object.entries(degreeLabels).map(([value, label]) => (
+            <option value={value}>{label}</option>
+          ))}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">مجال الدراسة</span>
+        <select name="category" class="quiz-input">
+          <option value="any">كل المجالات</option>
+          {fieldCategories.map((c) => <option value={c}>{c}</option>)}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">الدولة المفضّلة</span>
+        <select name="country" class="quiz-input">
+          <option value="any">كل الدول</option>
+          {countries.map((c) => <option value={c}>{c}</option>)}
+        </select>
+      </label>
+
+      <div class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">معدلك التراكمي</span>
+        <div class="flex gap-2">
+          <input
+            type="number" name="gpa" min="0" step="0.01"
+            placeholder="مثال: 3.2"
+            class="quiz-input flex-1 min-w-0"
+          />
+          <select name="gpaScale" class="quiz-input w-auto shrink-0 text-xs" aria-label="سلّم المعدل">
+            <option value="4.0">من 4.0</option>
+            <option value="5.0">من 5.0</option>
+            <option value="100">من 100٪</option>
+          </select>
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        class="sm:col-span-2 bg-navy-900 hover:bg-navy-800 text-white font-body font-bold px-6 py-3.5 rounded-xl transition-colors"
+      >
+        اعرض المنح المناسبة لي
+      </button>
+    </form>
+
+    <!-- ── Results ───────────────────────────────────────────────────── -->
+    <div id="quiz-results" class="mt-12" hidden>
+      <div class="flex items-baseline justify-between gap-3 mb-6">
+        <h2 class="font-display font-bold text-xl text-navy-900">النتائج</h2>
+        <span id="quiz-count" class="text-sm text-navy-500 font-body tabular"></span>
+      </div>
+
+      <div id="quiz-grid" class="grid sm:grid-cols-2 gap-5">
+        {all.map((s) => (
+          <div
+            data-degree={s.data.degreeLevel}
+            data-categories={s.data.fieldCategories.join('|')}
+            data-country={s.data.country}
+            data-gpamin={s.data.gpaMin ?? ''}
+            data-gpascale={s.data.gpaScale}
+          >
+            <ScholarshipCard
+              slug={s.slug}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div id="quiz-empty" class="text-center py-14" hidden>
+        <p class="font-display font-bold text-lg text-navy-900">لا توجد منحة مطابقة تماماً</p>
+        <p class="mt-2 text-sm text-navy-500 font-body max-w-md mx-auto leading-[1.95]">
+          هذا لا يعني أن الفرص انتهت — كثير من المنح لا تنشر شروط المعدل بدقة، وبعضها يفتح دورات جديدة قريباً.
+          اترك بياناتك أدناه وسنبحث لك يدوياً.
+        </p>
+      </div>
+
+      <!-- Lead capture: the actual conversion point of the whole page -->
+      <div class="mt-10">
+        <LeadForm
+          context="اعثر على منحتك"
+          title="نساعدك في الخطوة التالية"
+          subtitle="اترك اسمك ورقم واتساب، وسنراجع نتيجتك ونرشّح لك المنح الأنسب ونخبرك بالمستندات المطلوبة لكل منها."
+        />
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .quiz-input {
+    @apply w-full rounded-xl border border-navy-100 bg-white px-3.5 py-3 text-sm font-body text-navy-900
+           placeholder:text-navy-300 focus:border-gold-500 focus:outline-none transition-colors;
+  }
+</style>
+
+<script>
+  const form = document.getElementById('quiz-form') as HTMLFormElement;
+  const results = document.getElementById('quiz-results')!;
+  const grid = document.getElementById('quiz-grid')!;
+  const empty = document.getElementById('quiz-empty')!;
+  const count = document.getElementById('quiz-count')!;
+  const cards = Array.from(grid.querySelectorAll<HTMLElement>(':scope > div'));
+
+  /** GPA scales aren't comparable raw (2.5/4.0 vs 8/10 vs 75/100) — normalize. */
+  function toPercent(value: number, scale: string): number {
+    const max = scale === '100' ? 100 : parseFloat(scale);
+    return (value / max) * 100;
+  }
+
+  function countLabel(n: number): string {
+    if (n === 1) return 'منحة واحدة مطابقة';
+    if (n === 2) return 'منحتان مطابقتان';
+    if (n >= 3 && n <= 10) return `${n} منح مطابقة`;
+    return `${n} منحة مطابقة`;
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = new FormData(form);
+    const degreeLevel = String(data.get('degreeLevel'));
+    const category = String(data.get('category'));
+    const country = String(data.get('country'));
+    const gpaRaw = data.get('gpa');
+    const gpaScale = String(data.get('gpaScale') ?? '4.0');
+    const userPercent = gpaRaw ? toPercent(parseFloat(String(gpaRaw)), gpaScale) : null;
+
+    let visible = 0;
+    for (const card of cards) {
+      const cardCategories = (card.dataset.categories ?? '').split('|');
+      const gpaMinRaw = card.dataset.gpamin;
+      const minPercent = gpaMinRaw
+        ? toPercent(parseFloat(gpaMinRaw), card.dataset.gpascale ?? '4.0')
+        : null;
+
+      const match =
+        (degreeLevel === 'any' || card.dataset.degree === degreeLevel) &&
+        (category === 'any' ||
+          cardCategories.includes(category) ||
+          cardCategories.includes('جميع التخصصات')) &&
+        (country === 'any' || card.dataset.country === country) &&
+        (userPercent === null || minPercent === null || userPercent >= minPercent);
+
+      card.hidden = !match;
+      if (match) visible++;
+    }
+
+    results.hidden = false;
+    empty.hidden = visible > 0;
+    grid.hidden = visible === 0;
+    count.textContent = visible > 0 ? countLabel(visible) : '';
+    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+</script>
+</file>
+
+<file path="src/styles/global.css">
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Cairo', sans-serif;
+    scroll-behavior: smooth;
+    background-color: #F8FAFC;
+    color: #0F172A;
+    /* Arabic script needs more leading than Latin to stay comfortable to read */
+    line-height: 1.9;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Tajawal', sans-serif;
+    line-height: 1.4;
+    text-wrap: balance;
+  }
+
+  /* Consistent, visible keyboard focus everywhere */
+  :focus-visible {
+    outline: 2px solid theme('colors.gold.500');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: theme('colors.gold.300');
+    color: theme('colors.navy.900');
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Readable measure for long-form Arabic body copy */
+  .measure {
+    max-width: 68ch;
+  }
+
+  /* Glassmorphism Surfaces */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(226, 232, 240, 0.8);
+  }
+
+  .glass-dark {
+    background: rgba(10, 27, 48, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* Subtle Ambient Background Texture */
+  .bg-radial-glow {
+    background-image: radial-gradient(circle at 50% 0%, rgba(200, 155, 60, 0.15) 0%, transparent 60%);
+  }
+
+  .pattern-lattice {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='none' stroke='%23DEBB68' stroke-opacity='0.12' stroke-width='1'%3E%3Cpath d='M28 4 34 16 46 10 40 22 52 28 40 34 46 46 34 40 28 52 22 40 10 46 16 34 4 28 16 22 10 10 22 16Z'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 56px 56px;
+  }
+
+  /* Certificate-corner clip, kept for the seal motif */
+  .seal-notch {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+
+  /* Staggered card entrance. Pure CSS with fill-mode both so content is never
+     left invisible if the animation never runs (e.g. backgrounded tab). */
+  .card-in {
+    animation: card-in 0.5s ease both;
+  }
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Markdown body styling ───────────────────────────────────────────────
+   Used by scholarship detail pages for the rendered markdown. Lives here
+   rather than in a page's <style> block so a page rewrite can't silently
+   drop it and leave the content unstyled. No typography plugin installed,
+   so this is the real styling layer. */
+.mh-prose p {
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.975rem;
+  line-height: 2.05;
+  color: #3a3f47;
+  margin: 0 0 1.15rem;
+}
+.mh-prose p:last-child { margin-bottom: 0; }
+
+.mh-prose strong {
+  font-weight: 700;
+  color: #0A1B30;
+}
+
+.mh-prose h2 {
+  font-family: 'Tajawal', sans-serif;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #0A1B30;
+  margin: 2.25rem 0 1rem;
+  padding-inline-start: 0.85rem;
+  border-inline-start: 3px solid #C89B3C;
+}
+.mh-prose h2:first-child { margin-top: 0; }
+
+.mh-prose ul {
+  list-style: none;
+  margin: 0 0 1.15rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.mh-prose ul li {
+  position: relative;
+  padding-inline-start: 1.9rem;
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.925rem;
+  line-height: 1.85;
+  color: #3a3f47;
+}
+.mh-prose ul li::before {
+  content: "✓";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.28em;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 9999px;
+  background: #F4E7C6;
+  color: #96712A;
+  font-size: 0.68rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mh-prose ol {
+  list-style: none;
+  counter-reset: mh-step;
+  margin: 0 0 1.15rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.mh-prose ol li {
+  counter-increment: mh-step;
+  position: relative;
+  padding-inline-start: 2.1rem;
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.925rem;
+  line-height: 1.85;
+  color: #3a3f47;
+}
+.mh-prose ol li::before {
+  content: counter(mh-step, arabic-indic);
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.1em;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: #D3DEEA;
+  color: #152E4F;
+  font-family: 'Tajawal', sans-serif;
+  font-weight: 800;
+  font-size: 0.72rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mh-prose a {
+  color: #96712A;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+</file>
+
+<file path="src/env.d.ts">
+/// <reference path="../.astro/types.d.ts" />
+</file>
+
+<file path=".gitignore">
+node_modules/
+dist/
+.astro/
+.env
+.DS_Store
+</file>
+
+<file path="astro.config.mjs">
+import { defineConfig } from 'astro/config';
+import tailwind from '@astrojs/tailwind';
+
+export default defineConfig({
+  site: 'https://menhati.com',
+  integrations: [
+    tailwind({ applyBaseStyles: false }),
+  ],
+});
+</file>
+
+<file path="CONTEXT.md">
+# Menhati — project context for Claude Code
+
+Read this first. It's the full context from the planning conversation that led to this scaffold,
+written so you don't need to re-ask the team anything already decided below.
+
+## Who's asking
+
+Ubakel — a small AI automation agency. Two people use this workspace: obai and Al-Aqel. Menhati is
+a business the user and friends started — not a client project.
+
+## What Menhati actually is (the business, not just the website)
+
+A small team applies to scholarships on behalf of students: they prepare documents, translate them,
+and write SOPs and CVs. They recently bought an official translation stamp/certification and are
+adding a formal translation service line. They already run active channels on WhatsApp, Telegram,
+Facebook, Instagram, and YouTube, but have no structured funnel from "follower" to "paying client."
+They are new to the market and explicitly want to come across as professional, organized, honest,
+and highly trusted — trust is the main competitive lever since they're not established yet.
+
+Non-website priorities the team also discussed (not yet built, may come up again):
+- An internal case-tracker: student → target scholarship(s) → documents needed/received →
+  translation status → SOP/CV drafting stage → deadline → status. Currently informal (WhatsApp
+  threads), causing organizational strain as client count grows.
+- A weekly (not daily) scholarship-research cadence, ideally with team members each owning a region
+  (e.g. MENA/Gulf-funded, EU/Erasmus-style, US/Fulbright-style) to avoid burnout from ad-hoc search.
+- Trust-building beyond the site: published case studies, a written service agreement/pricing
+  structure before taking payment, and visibly displaying the translation stamp as a badge.
+- AI integration for the website itself was explicitly raised and then explicitly cancelled by the
+  user mid-conversation — don't reintroduce AI-on-the-website scope unless the user brings it up
+  again. (AI-assisted internal drafting tools for SOPs/CVs/translation were discussed as a strong
+  future fit *for Ubakel's own service offering*, separate from the public site — also not started.)
+
+## Website goal
+
+menhati.com: an Arabic-first (RTL) scholarship directory and educational consultancy site, built for
+$0 hosting, that converts social traffic into WhatsApp leads via an eligibility quiz and a clean
+listings/detail experience.
+
+## Infrastructure already in place (outside this repo)
+
+- Domain `menhati.com` on Cloudflare, hosting will be Cloudflare Pages.
+- Zoho Mail (free tier) with SPF/DKIM/DMARC already configured.
+- CMS choice: Decap CMS (git-based, no external DB) over Sanity, specifically to keep hosting at a
+  true $0 — this was a deliberate tradeoff discussion, not a default pick.
+
+## Design decisions (already made — don't re-derive from scratch)
+
+- Colors: deep navy as the dominant brand color, gold used sparingly as an accent (badges, seals,
+  deadlines) — deliberately avoiding the generic "warm cream + terracotta" AI-generated-design look.
+- Type: Tajawal for display/headings, Cairo for body — both loaded via Google Fonts.
+- Signature element: a circular "seal" badge (`CountdownSeal.astro`) showing days-to-deadline,
+  styled like a wax seal with a gold ring. This deliberately echoes the team's real translation
+  stamp — it's the one visual idea meant to be memorable, so keep it consistent if you extend the
+  design rather than introducing a second competing motif.
+
+## What's built in this scaffold (Phase 1, done)
+
+Astro + Tailwind project, RTL throughout, homepage, scholarship listing (with a working client-side
+country filter), dynamic scholarship detail pages via a typed content collection, Decap CMS config
+with Arabic field labels, Navbar/Footer/WhatsApp floating button, one sample scholarship entry.
+Full technical setup steps are in `README.md`.
+
+Note: this scaffold was hand-written in a sandbox with no network access, so `npm install` has never
+actually been run against it yet — treat first boot as the first real test of the code, not as
+already-verified.
+
+## Roadmap — where to pick up
+
+**Phase 2 — Core pages and content** (mostly done by this scaffold; remaining: populate more real
+scholarships, stand up the internal case-tracker as a separate deliverable — ask the user whether
+they want that as a spreadsheet, Notion, or something else before building it)
+
+**Phase 3 — Interactive features (next up, most likely starting point):**
+- Build `/quiz` — currently only linked from nav/homepage, not built. Eligibility matcher should be
+  simple rule-based filtering (major, GPA, country, degree level) against the scholarships content
+  collection — explicitly NOT an AI-powered matcher, that was a deliberate choice to keep it fast,
+  free, and predictable. Only reconsider AI here later, if filter results get too large to be useful.
+- Countdown/auto-expiration: the seal badge already counts down client-side; still need to filter
+  fully-expired scholarships out of listings at build time.
+- Quiz lead capture: a Cloudflare Pages Function that takes quiz answers + contact info, emails the
+  team via Zoho, and optionally logs to Cloudflare D1 so leads feed the future case-tracker instead
+  of getting lost.
+
+**Phase 4 — Trust and launch prep:** case studies, "how it works" transparency page, written
+pricing/service agreement.
+
+Note: the official translation stamp must NOT appear anywhere on the site, visually or as a claim
+("ختم رسمي" wording) — this was explicitly rejected by the user on 2026-07-24 ("it has nothing to
+do there"), reversing the earlier plan to show it as a trust badge. The homepage hero badge and the
+footer badge that referenced it have been removed. Don't reintroduce it unless the user brings it
+up again. The `CountdownSeal.astro` deadline-countdown badge is unrelated (shows days-to-deadline,
+not the stamp) and was left in place.
+
+**Phase 5 — Go live and ops:** point the domain live, GitHub Actions daily cron to trigger a
+Cloudflare Pages rebuild (so expired listings drop off without a manual deploy), then the weekly
+scholarship-sourcing cadence described above.
+
+## Working style notes
+
+The user prefers being walked through phases with a clear "what's next" rather than everything at
+once, and reacts well to concrete artifacts over abstract discussion — lean toward writing real code
+you'll only revise, over lengthy proposals.
+</file>
+
+<file path="package.json">
+{
+  "name": "menhati",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^4.15.0",
+    "@astrojs/tailwind": "^5.1.0",
+    "tailwindcss": "^3.4.10"
+  }
+}
+</file>
+
+<file path="README.md">
+# منحتي — Menhati
+
+Arabic-first (RTL) scholarship directory. Astro + Tailwind, deployed on Cloudflare Pages for $0
+hosting. Content is managed through Decap CMS (git-based, no database).
+
+## 1. Local setup
+
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:4321 (or the port printed in the terminal).
+
+## 2. Adding a scholarship
+
+**Option A — through the CMS (for non-technical team members).**
+Go to `/admin` and fill out the form. Every field has an Arabic hint explaining what to put in it.
+
+To try the CMS locally without any GitHub setup, run these in two terminals:
+
+```bash
+npm run dev
+```
+
+```bash
+npx decap-server
+```
+
+Then open http://localhost:4321/admin/index.html — edits are written straight to the files in
+`src/content/scholarships/`.
+
+To make `/admin` work on the live site you still need to:
+
+1. Push this repo to GitHub.
+2. Replace `your-org/menhati` in `public/admin/config.yml` with the real repo path.
+3. Set up OAuth so `/admin` can commit on the team's behalf — see
+   [Decap's GitHub backend docs](https://decapcms.org/docs/github-backend/).
+
+**Option B — by hand.** Copy any file in `src/content/scholarships/`, rename it, and edit the
+frontmatter. Astro validates it against `src/content/config.ts` on build, so a missing or
+misspelled field fails loudly instead of silently rendering wrong.
+
+### Content rules (important)
+
+- **Only publish what an official source confirms** — a ministry, embassy, or the university's own
+  site. Never take a deadline from a scholarship aggregator/blog; several have been caught with
+  dates that were a full year stale.
+- **Never delete a scholarship when its deadline passes.** It moves automatically into
+  "منح مغلقة حالياً" and stays useful — most of these programs reopen annually.
+- **`gpaScale` must match the scale the number was published on** (4.0 / 5.0 / 100). The eligibility
+  quiz normalizes to a percentage before comparing, so a wrong scale silently mismatches students.
+- **Only use images you're licensed to reuse**, and always fill in `imageCredit` — attribution is a
+  legal condition of the CC licences the current photos use. If no licensed real photo exists,
+  leave `image` empty: the card falls back to a designed country cover, which is honest. Never
+  substitute a stock or AI image of a different campus.
+
+## 3. Lead capture (Phase 3)
+
+Forms on the quiz and each scholarship page POST to `/api/lead`, implemented as a Cloudflare Pages
+Function in `functions/api/lead.ts`.
+
+It degrades gracefully by design — **every delivery channel is optional**:
+
+| What you configure | Effect |
+| --- | --- |
+| nothing | Form still "succeeds" and hands the visitor to WhatsApp with a pre-filled message |
+| D1 binding `LEADS_DB` | Lead is stored in a `leads` table |
+| env `RESEND_API_KEY` | Team gets an email per lead |
+
+So a lead is never lost, even before the backend is wired up.
+
+**To store leads in D1:**
+
+```bash
+npx wrangler d1 create menhati-leads
+npx wrangler d1 execute menhati-leads --remote --file=./schema.sql
+```
+
+Then in Cloudflare Pages → Settings → Functions → D1 bindings, bind it as `LEADS_DB`.
+
+**To get lead emails:** create a [Resend](https://resend.com) API key, verify your sending domain,
+then add these environment variables in Cloudflare Pages → Settings → Environment variables:
+
+- `RESEND_API_KEY`
+- `LEAD_TO_EMAIL` (defaults to `info@menhati.com`)
+- `LEAD_FROM_EMAIL` (must be on your verified domain)
+
+> Note: Pages Functions don't run under `npm run dev`. To test the endpoint locally use
+> `npx wrangler pages dev -- npm run dev`.
+
+## 4. Deploying to Cloudflare Pages
+
+1. Push this repo to GitHub.
+2. Cloudflare dashboard → Pages → Create a project → connect the repo.
+3. Build command `npm run build`, output directory `dist`.
+4. Add the custom domain `menhati.com` after the first successful deploy.
+
+Every push to `main` (including CMS commits) triggers an automatic rebuild.
+
+## 5. Before going live — checklist
+
+- [ ] **Replace the placeholder WhatsApp number** in `src/lib/site.ts` (`whatsappNumber`). It is
+      currently the scaffold value `966500000000` and is used by the floating button, navbar,
+      footer, every scholarship CTA and the lead form.
+- [ ] Confirm the social links in `src/lib/site.ts` point at the real accounts.
+- [ ] Set the real GitHub repo in `public/admin/config.yml` and finish OAuth setup.
+- [ ] Add `public/og-default.png` (1200×630) — referenced for social sharing previews.
+- [ ] Wire up lead delivery (section 3) so the team gets notified.
+
+## 6. Still to build
+
+- Daily rebuild cron (GitHub Actions) so newly-expired scholarships move to the closed section
+  without a manual deploy.
+- Per-scholarship OG images (currently one static `/og-default.png`).
+- Internal case-tracker for students in progress (a CSV template exists; tool not chosen yet).
+
+## Architecture notes
+
+```
+src/
+  lib/           site.ts (contact details), flags.ts, scholarship.ts (shared display logic)
+  components/    ScholarshipCard, CardCover, LeadForm, CountdownSeal, Navbar, Footer, Logo
+  content/       config.ts (schema) + scholarships/*.md (the data)
+  pages/         index, quiz, scholarships/index, scholarships/[slug]
+functions/api/   lead.ts (Cloudflare Pages Function)
+```
+
+- **`src/lib/scholarship.ts`** owns deadline/status/degree wording and GPA normalization. Put shared
+  display logic here — these rules previously drifted between pages.
+- **`src/lib/site.ts`** is the only place contact details live.
+- **`.mh-prose` styles live in `global.css`**, not in a page `<style>` block, so a page rewrite
+  can't silently leave markdown content unstyled (this already happened once).
+- **Keep the Tailwind colour scales complete** in `tailwind.config.mjs`. A missing step (e.g.
+  `navy-300`) fails *silently* in class attributes and only errors inside `@apply`, which produces
+  confusing half-broken styling.
+
+## Design tokens
+
+- Colors: `navy` (brand), `gold` (accent — seals, badges, CTAs), `live`/`closing` (status),
+  `paper`/`ink`. Defined in `tailwind.config.mjs`.
+- Type: Tajawal (display/headings), Cairo (body), via Google Fonts in `Layout.astro`.
+- Arabic needs more leading than Latin — base `line-height` is 1.9 in `global.css`. Keep it.
+- Signature element: the countdown "seal" badge (`CountdownSeal.astro`), a circular gold-ringed
+  badge echoing the certified/official feel of the brand.
+</file>
+
+<file path="schema.sql">
+-- D1 schema for lead capture (see functions/api/lead.ts).
+--
+-- Create the database once:
+--   npx wrangler d1 create menhati-leads
+-- Then apply this schema:
+--   npx wrangler d1 execute menhati-leads --remote --file=./schema.sql
+--
+-- Finally bind it in the Cloudflare Pages project settings as: LEADS_DB
+
+CREATE TABLE IF NOT EXISTS leads (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  phone       TEXT NOT NULL,
+  message     TEXT,
+  context     TEXT,          -- which scholarship / page the lead came from
+  page        TEXT,
+  country     TEXT,          -- approximate, from Cloudflare's CF-IPCountry header
+  received_at TEXT NOT NULL, -- ISO 8601 UTC
+  status      TEXT DEFAULT 'new'  -- new | contacted | client | closed
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_received_at ON leads (received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_leads_status ON leads (status);
+</file>
+
+<file path="tailwind.config.mjs">
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
+  theme: {
+    extend: {
+      colors: {
+        // Primary surface / brand color — deep, official, "ministry letterhead" navy
+        // Full scale on purpose: missing steps fail silently in class attributes
+        // (the style just never applies) and only error inside @apply, which made
+        // for confusing half-broken UI. Keep every step defined.
+        navy: {
+          50: '#EEF2F7',
+          100: '#D3DEEA',
+          200: '#A6BEDA',
+          300: '#7B99C4',
+          400: '#4A6FA1',
+          500: '#2F5480',
+          600: '#1B3A63',
+          700: '#152E4F',
+          800: '#122A4A',
+          900: '#0A1B30',
+          950: '#06111F',
+        },
+        // Accent — used sparingly, like foil on a certificate: seals, deadlines, badges
+        gold: {
+          100: '#F4E7C6',
+          200: '#EAD59A',
+          300: '#DEBB68',
+          400: '#D3AA50',
+          500: '#C89B3C',
+          600: '#AF8533',
+          700: '#96712A',
+        },
+        // Status
+        live: '#3E7A5C',
+        closing: '#B4542A',
+        paper: '#F7F6F2',
+        ink: '#1A1D22',
+      },
+      fontFamily: {
+        display: ['Tajawal', 'sans-serif'],
+        body: ['Cairo', 'sans-serif'],
+      },
+    },
+  },
+  plugins: [],
+};
+</file>
+
+<file path="tsconfig.json">
+{
+  "extends": "astro/tsconfigs/strict",
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist"]
+}
+</file>
+
+</files>

@@ -1,0 +1,43 @@
+---
+interface Props {
+  deadline: Date;
+  size?: 'sm' | 'lg';
+}
+const { deadline, size = 'sm' } = Astro.props;
+const iso = deadline.toISOString();
+const dims = size === 'lg' ? 'w-20 h-20 text-2xl' : 'w-14 h-14 text-sm';
+---
+
+<div
+  class={`seal ${dims} rounded-full border-2 border-gold-500 bg-navy-900 text-gold-100 flex flex-col items-center justify-center leading-none shrink-0`}
+  data-deadline={iso}
+  role="img"
+  aria-label="الأيام المتبقية على الموعد النهائي"
+>
+  <span class="days font-display font-black tabular">--</span>
+  <span class="unit text-[9px] font-body text-gold-300 mt-0.5">يوم متبقي</span>
+</div>
+
+<script>
+  function paintSeals(root: ParentNode = document) {
+    const now = Date.now();
+    root.querySelectorAll<HTMLElement>('.seal[data-deadline]').forEach((seal) => {
+      const deadline = new Date(seal.dataset.deadline!).getTime();
+      const rawDays = Math.ceil((deadline - now) / (1000 * 60 * 60 * 24));
+      const label = seal.querySelector<HTMLElement>('.days');
+      const unit = seal.querySelector<HTMLElement>('.unit');
+      if (rawDays < 0) {
+        if (label) label.textContent = '';
+        if (unit) unit.textContent = 'مغلقة حالياً';
+        seal.classList.add('border-navy-200', 'bg-navy-50', 'text-navy-400');
+        seal.classList.remove('border-gold-500', 'bg-navy-900', 'text-gold-100');
+        seal.setAttribute('aria-label', 'انتهى موعد التقديم على هذه المنحة');
+      } else {
+        if (label) label.textContent = rawDays.toLocaleString('ar-EG');
+        if (rawDays <= 7) seal.classList.add('border-closing', 'text-closing');
+      }
+    });
+  }
+  document.addEventListener('astro:page-load', () => paintSeals());
+  paintSeals();
+</script>
