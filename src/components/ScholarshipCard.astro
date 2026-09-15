@@ -1,9 +1,11 @@
 ---
 import CardCover from './CardCover.astro';
-import { statusOf, degreeLabels, formatDeadline, countdownLabel } from '../lib/scholarship';
+import { statusOf, degreeLabel, formatDeadline, countdownLabel } from '../lib/scholarship';
+import { getLangFromUrl, useTranslations } from '../lib/i18n';
 
 interface Props {
-  slug: string;
+  /** URL path for this scholarship (already localized by the caller). */
+  href: string;
   title: string;
   major: string;
   country: string;
@@ -20,13 +22,16 @@ interface Props {
 }
 
 const {
-  slug, title, major, country, university,
+  href, title, major, country, university,
   gpaMin, gpaScale, awardValue, fundingType, degreeLevel,
   deadline, image, imageCredit, eager,
 } = Astro.props;
 
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+
 const status = statusOf(deadline);
-const countdown = countdownLabel(deadline);
+const countdown = countdownLabel(deadline, lang);
 
 // The countdown sits on the cover as a solid pill — high contrast against any
 // photo, and colour-coded so urgency reads at a glance.
@@ -39,7 +44,7 @@ const countdownStyles: Record<typeof status, string> = {
 
 <article class="group h-full">
   <a
-    href={`/scholarships/${slug}`}
+    href={href}
     class="flex h-full flex-col bg-white border border-navy-100 rounded-xl overflow-hidden transition-all duration-300 hover:border-gold-500/70 hover:shadow-[0_14px_36px_-14px_rgba(10,27,48,0.32)] hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-500"
   >
     <div class="relative">
@@ -65,10 +70,10 @@ const countdownStyles: Record<typeof status, string> = {
             fundingType === 'fully-funded' ? 'bg-live/12 text-live' : 'bg-gold-100 text-gold-700',
           ]}
         >
-          {fundingType === 'fully-funded' ? 'ممولة بالكامل' : 'تمويل جزئي'}
+          {fundingType === 'fully-funded' ? t('card.fullyFunded') : t('card.partial')}
         </span>
         <span class="text-xs font-body font-semibold px-2.5 py-1 rounded-md bg-navy-50 text-navy-600">
-          {degreeLabels[degreeLevel]}
+          {degreeLabel(degreeLevel, lang)}
         </span>
       </div>
 
@@ -85,13 +90,13 @@ const countdownStyles: Record<typeof status, string> = {
       <!-- Meta pinned to the bottom so cards in a row stay aligned -->
       <dl class="mt-auto pt-5 space-y-2 text-[0.9375rem] font-body">
         <div class="flex items-start gap-2.5">
-          <dt class="text-navy-400 shrink-0">التخصص</dt>
+          <dt class="text-navy-400 shrink-0">{t('card.major')}</dt>
           <dd class="text-navy-800 font-medium line-clamp-1">{major}</dd>
         </div>
         {gpaMin && (
           <div class="flex items-center gap-2.5">
-            <dt class="text-navy-400 shrink-0">أقل معدل</dt>
-            <dd class="text-navy-800 font-medium tabular">{gpaMin} من {gpaScale}</dd>
+            <dt class="text-navy-400 shrink-0">{t('card.minGpa')}</dt>
+            <dd class="text-navy-800 font-medium tabular">{gpaMin} {t('card.outOf')} {gpaScale}</dd>
           </div>
         )}
       </dl>
@@ -101,11 +106,13 @@ const countdownStyles: Record<typeof status, string> = {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" class="shrink-0 text-navy-300">
             <rect x="3" y="5" width="18" height="16" rx="2" /><path stroke-linecap="round" d="M8 3v4M16 3v4M3 10h18" />
           </svg>
-          {formatDeadline(deadline)}
+          {formatDeadline(deadline, lang)}
         </span>
         <span class="text-[0.875rem] font-body font-bold text-gold-700 inline-flex items-center gap-1 shrink-0">
-          التفاصيل
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="transition-transform group-hover:-translate-x-0.5">
+          {t('card.details')}
+          <!-- Arrow points in the reading-forward direction: left in RTL,
+               flipped to right in LTR. -->
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="shrink-0 transition-transform ltr:rotate-180 group-hover:scale-110">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 12H5M11 18l-6-6 6-6" />
           </svg>
         </span>

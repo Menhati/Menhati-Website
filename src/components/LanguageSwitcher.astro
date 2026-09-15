@@ -1,0 +1,58 @@
+---
+import { getLangFromUrl, useTranslations, alternatePath, type Lang } from '../lib/i18n';
+
+interface Props {
+  /** `inline` for the desktop navbar, `block` for the mobile menu. */
+  variant?: 'inline' | 'block';
+}
+
+const { variant = 'inline' } = Astro.props;
+
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+const target: Lang = lang === 'ar' ? 'en' : 'ar';
+
+// Keep the visitor on the same page when switching languages. The query string
+// isn't known at build time for prerendered pages, so active filters are
+// re-attached on the client (see the script below).
+const href = alternatePath(Astro.url.pathname, target);
+---
+
+<a
+  href={href}
+  data-lang-switch
+  data-base-path={href}
+  hreflang={target}
+  lang={target}
+  aria-label={t('nav.switchLangAria')}
+  class:list={[
+    'font-body font-semibold transition-colors inline-flex items-center gap-1.5',
+    variant === 'inline'
+      ? 'text-sm text-navy-100 hover:text-gold-300'
+      : 'block py-2 text-navy-100 hover:text-gold-300',
+  ]}
+>
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" class="shrink-0 opacity-70" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18Z" />
+  </svg>
+  {t('nav.switchLang')}
+</a>
+
+<script>
+  /**
+   * Carry the current query string across a language switch so filters and
+   * search terms survive. The listing page keeps its state in the URL, and that
+   * URL only exists at runtime — these pages are prerendered, so the server
+   * can't bake it into the href.
+   */
+  function syncLanguageLinks() {
+    const search = location.search;
+    if (!search) return;
+    document.querySelectorAll<HTMLAnchorElement>('a[data-lang-switch]').forEach((a) => {
+      a.href = a.dataset.basePath + search;
+    });
+  }
+  syncLanguageLinks();
+  document.addEventListener('astro:page-load', syncLanguageLinks);
+</script>

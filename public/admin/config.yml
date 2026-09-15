@@ -165,3 +165,67 @@ collections:
         hint: >-
           ابدأ بفقرة تعريفية قصيرة (٢-٤ أسطر)، ثم عنوان «## الشروط الأساسية» بقائمة نقاط،
           ثم «## المستندات المطلوبة» إن توفرت. لا تكتب معلومة غير مؤكدة من المصدر الرسمي.
+
+  # ── الترجمات الإنجليزية ────────────────────────────────────────────────
+  # ترجمة النصوص فقط. المواعيد والدولة ونوع التمويل والمرحلة والصورة تُؤخذ
+  # تلقائياً من النسخة العربية، فلا حاجة لتكرارها — وبهذا يستحيل أن يختلف
+  # الموعد النهائي بين اللغتين.
+  - name: "scholarships_en"
+    label: "الترجمات الإنجليزية"
+    label_singular: "ترجمة"
+    description: >-
+      أضف ترجمة إنجليزية لمنحة موجودة. أهم حقل هو «معرّف المنحة» — يجب أن يطابق
+      اسم ملف النسخة العربية تماماً، وإلا لن تُربط الترجمة بالمنحة.
+    folder: "src/content/scholarships/en"
+    create: true
+    slug: "{{translationKey}}"
+    identifier_field: title
+    summary: "{{title}}  ←  {{translationKey}}"
+    sortable_fields: ["title", "translationKey"]
+
+    fields:
+      - label: "اللغة"
+        name: "lang"
+        widget: "hidden"
+        default: "en"
+
+      - label: "معرّف المنحة (translationKey) *"
+        name: "translationKey"
+        widget: "string"
+        hint: >-
+          اسم ملف النسخة العربية بدون .md — مثال: chevening-master-uk
+          (تجده في عنوان صفحة المنحة بعد /scholarships/).
+
+      - label: "Title *"
+        name: "title"
+        widget: "string"
+        hint: "عنوان المنحة بالإنجليزية."
+
+      - label: "Field / major *"
+        name: "major"
+        widget: "string"
+        hint: "التخصصات بالإنجليزية، مثل: Any subject available at master's level"
+
+      - label: "What it covers *"
+        name: "awardValue"
+        widget: "text"
+        hint: "ما تغطيه المنحة بالإنجليزية. يجب أن يطابق المعنى العربي تماماً."
+
+      - label: "Provider / university"
+        name: "university"
+        widget: "string"
+        required: false
+        hint: "اتركه فارغاً ليُستخدم الاسم من النسخة العربية."
+
+      - label: "Image credit"
+        name: "imageCredit"
+        widget: "string"
+        required: false
+        hint: "اتركه فارغاً ليُستخدم نص الإسناد من النسخة العربية."
+
+      - label: "Details *"
+        name: "body"
+        widget: "markdown"
+        hint: >-
+          ترجمة نص المنحة. استخدم نفس العناوين بالإنجليزية: ## Eligibility ثم
+          ## Documents required. لا تترجم رقماً أو تاريخاً بشكل مختلف عن العربية.

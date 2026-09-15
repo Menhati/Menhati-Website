@@ -1,24 +1,29 @@
 ---
 import Logo from './Logo.astro';
+import LanguageSwitcher from './LanguageSwitcher.astro';
 import { whatsappLink } from '../lib/site';
+import { getLangFromUrl, useTranslations, localizePath } from '../lib/i18n';
 
-const waHref = whatsappLink('مرحباً، أرغب بمعرفة المزيد عن المنح الدراسية المتاحة');
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+
+const waHref = whatsappLink(t('wa.general'));
 
 const links = [
-  { href: '/', label: 'الرئيسية' },
-  { href: '/scholarships', label: 'المنح الدراسية' },
-  { href: '/quiz', label: 'اعثر على منحتك' },
-  { href: '/#how-it-works', label: 'كيف نعمل' },
+  { href: localizePath('/', lang), label: t('nav.home') },
+  { href: localizePath('/scholarships', lang), label: t('nav.scholarships') },
+  { href: localizePath('/quiz', lang), label: t('nav.quiz') },
+  { href: localizePath('/#how-it-works', lang), label: t('nav.how') },
 ];
 ---
 
 <header class="bg-navy-900 text-white sticky top-0 z-40">
-  <nav class="max-w-6xl mx-auto flex items-center justify-between px-5 py-4">
-    <a href="/" class="flex items-center gap-2">
+  <nav class="max-w-6xl mx-auto flex items-center justify-between gap-4 px-5 py-4">
+    <a href={localizePath('/', lang)} class="flex items-center gap-2 shrink-0">
       <Logo height={42} />
     </a>
 
-    <ul class="hidden md:flex items-center gap-8 font-body text-sm">
+    <ul class="hidden md:flex items-center gap-7 font-body text-sm">
       {links.map((link) => (
         <li>
           <a href={link.href} class="text-navy-100 hover:text-gold-300 transition-colors">
@@ -28,19 +33,22 @@ const links = [
       ))}
     </ul>
 
-    <a
-      href={waHref}
-      target="_blank"
-      rel="noopener"
-      class="hidden md:inline-block bg-gold-500 text-navy-900 font-body font-semibold text-sm px-4 py-2 rounded hover:bg-gold-300 transition-colors"
-    >
-      تواصل عبر واتساب
-    </a>
+    <div class="hidden md:flex items-center gap-5 shrink-0">
+      <LanguageSwitcher />
+      <a
+        href={waHref}
+        target="_blank"
+        rel="noopener"
+        class="bg-gold-500 text-navy-900 font-body font-semibold text-sm px-4 py-2 rounded hover:bg-gold-300 transition-colors"
+      >
+        {t('nav.whatsapp')}
+      </a>
+    </div>
 
     <button
       id="menu-toggle"
       class="md:hidden text-white"
-      aria-label="فتح القائمة"
+      aria-label={t('nav.openMenu')}
       aria-expanded="false"
       aria-controls="mobile-menu"
     >
@@ -56,9 +64,12 @@ const links = [
         <a href={link.href} class="block py-2 text-navy-100">{link.label}</a>
       </li>
     ))}
+    <li class="border-t border-navy-700 mt-1 pt-1">
+      <LanguageSwitcher variant="block" />
+    </li>
     <li>
       <a href={waHref} class="block py-2 text-gold-300 font-semibold">
-        تواصل عبر واتساب
+        {t('nav.whatsapp')}
       </a>
     </li>
   </ul>

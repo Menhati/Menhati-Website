@@ -1,0 +1,22 @@
+---
+import ScholarshipDetail from '../../../components/pages/ScholarshipDetail.astro';
+import { getScholarshipsFor, type ScholarshipView } from '../../../lib/content';
+
+export async function getStaticPaths() {
+  // English words where a translation exists, Arabic fallback otherwise — so
+  // every scholarship is reachable at /en/scholarships/<slug> from day one.
+  const views = await getScholarshipsFor('en');
+  return views.map((view) => ({
+    params: { slug: view.key },
+    props: { view },
+  }));
+}
+
+interface Props {
+  view: ScholarshipView;
+}
+
+const { view } = Astro.props;
+---
+
+<ScholarshipDetail view={view} />

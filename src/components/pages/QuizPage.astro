@@ -1,0 +1,202 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import ScholarshipCard from '../ScholarshipCard.astro';
+import LeadForm from '../LeadForm.astro';
+import { countryName } from '../../lib/flags';
+import { degreeLabelsByLang, fieldCategories, fieldCategoryLabel } from '../../lib/scholarship';
+import { getLangFromUrl, useTranslations } from '../../lib/i18n';
+import { getScholarshipsFor, scholarshipPath } from '../../lib/content';
+
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+
+const all = (await getScholarshipsFor(lang))
+  .filter((s) => s.data.deadline.valueOf() >= Date.now())
+  .sort((a, b) => a.data.deadline.valueOf() - b.data.deadline.valueOf());
+
+const countries = [...new Set(all.map((s) => s.data.country))].sort((a, b) =>
+  countryName(a, lang).localeCompare(countryName(b, lang), lang)
+);
+---
+
+<Layout title={t('quiz.title')} description={t('quiz.subtitle')}>
+  <section class="max-w-4xl mx-auto px-5 py-10 sm:py-14">
+    <header class="text-center max-w-xl mx-auto">
+      <span class="inline-flex items-center gap-2 text-xs font-body font-semibold text-gold-700 bg-gold-100 rounded-full px-3.5 py-1.5">
+        {t('quiz.badge')}
+      </span>
+      <h1 class="mt-5 font-display font-black text-2xl sm:text-3xl text-navy-900">{t('quiz.title')}</h1>
+      <p class="mt-3 text-navy-500 font-body text-sm sm:text-base leading-[1.95]">{t('quiz.subtitle')}</p>
+    </header>
+
+    <form
+      id="quiz-form"
+      class="mt-9 grid sm:grid-cols-2 gap-4 bg-white border border-navy-100 rounded-2xl p-5 sm:p-6 shadow-sm"
+    >
+      <label class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">{t('quiz.degree')}</span>
+        <select name="degreeLevel" class="quiz-input">
+          <option value="any">{t('quiz.anyDegree')}</option>
+          {Object.entries(degreeLabelsByLang[lang]).map(([value, label]) => (
+            <option value={value}>{label}</option>
+          ))}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">{t('quiz.field')}</span>
+        <select name="category" class="quiz-input">
+          <option value="any">{t('quiz.anyField')}</option>
+          {fieldCategories.map((c) => <option value={c}>{fieldCategoryLabel(c, lang)}</option>)}
+        </select>
+      </label>
+
+      <label class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">{t('quiz.country')}</span>
+        <select name="country" class="quiz-input">
+          <option value="any">{t('quiz.anyCountry')}</option>
+          {countries.map((c) => <option value={c}>{countryName(c, lang)}</option>)}
+        </select>
+      </label>
+
+      <div class="block">
+        <span class="block text-xs font-body text-navy-600 mb-1.5">{t('quiz.gpa')}</span>
+        <div class="flex gap-2">
+          <input
+            type="number" name="gpa" min="0" step="0.01"
+            placeholder={t('quiz.gpaPlaceholder')}
+            class="quiz-input flex-1 min-w-0"
+          />
+          <select name="gpaScale" class="quiz-input w-auto shrink-0 text-xs" aria-label={t('quiz.gpaScaleAria')}>
+            <option value="4.0">{t('quiz.scale4')}</option>
+            <option value="5.0">{t('quiz.scale5')}</option>
+            <option value="100">{t('quiz.scale100')}</option>
+          </select>
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        class="sm:col-span-2 bg-navy-900 hover:bg-navy-800 text-white font-body font-bold px-6 py-3.5 rounded-xl transition-colors"
+      >
+        {t('quiz.submit')}
+      </button>
+    </form>
+
+    <!-- ── Results ───────────────────────────────────────────────────── -->
+    <div id="quiz-results" class="mt-12" hidden>
+      <div class="flex items-baseline justify-between gap-3 mb-6">
+        <h2 class="font-display font-bold text-xl text-navy-900">{t('quiz.results')}</h2>
+        <span id="quiz-count" class="text-sm text-navy-500 font-body tabular"></span>
+      </div>
+
+      <div id="quiz-grid" class="grid sm:grid-cols-2 gap-5">
+        {all.map((s) => (
+          <div
+            data-degree={s.data.degreeLevel}
+            data-categories={s.data.fieldCategories.join('|')}
+            data-country={s.data.country}
+            data-gpamin={s.data.gpaMin ?? ''}
+            data-gpascale={s.data.gpaScale}
+          >
+            <ScholarshipCard
+              href={scholarshipPath(s.key, lang)}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div id="quiz-empty" class="text-center py-14" hidden>
+        <p class="font-display font-bold text-lg text-navy-900">{t('quiz.emptyTitle')}</p>
+        <p class="mt-2 text-sm text-navy-500 font-body max-w-md mx-auto leading-[1.95]">{t('quiz.emptyBody')}</p>
+      </div>
+
+      <!-- Lead capture: the actual conversion point of the whole page -->
+      <div class="mt-10">
+        <LeadForm context={t('quiz.title')} title={t('quiz.leadTitle')} subtitle={t('quiz.leadSubtitle')} />
+      </div>
+    </div>
+
+    <span id="quiz-i18n" hidden data-lang={lang}></span>
+  </section>
+</Layout>
+
+<style>
+  .quiz-input {
+    @apply w-full rounded-xl border border-navy-100 bg-white px-3.5 py-3 text-sm font-body text-navy-900
+           placeholder:text-navy-300 focus:border-gold-500 focus:outline-none transition-colors;
+  }
+</style>
+
+<script>
+  const form = document.getElementById('quiz-form') as HTMLFormElement;
+  const results = document.getElementById('quiz-results')!;
+  const grid = document.getElementById('quiz-grid')!;
+  const empty = document.getElementById('quiz-empty')!;
+  const count = document.getElementById('quiz-count')!;
+  const cards = Array.from(grid.querySelectorAll<HTMLElement>(':scope > div'));
+  const lang = document.getElementById('quiz-i18n')?.dataset.lang ?? 'ar';
+
+  /** GPA scales aren't comparable raw (2.5/4.0 vs 8/10 vs 75/100) — normalize. */
+  function toPercent(value: number, scale: string): number {
+    const max = scale === '100' ? 100 : parseFloat(scale);
+    return (value / max) * 100;
+  }
+
+  function countLabel(n: number): string {
+    if (lang === 'en') return n === 1 ? '1 matching scholarship' : `${n} matching scholarships`;
+    if (n === 1) return 'منحة واحدة مطابقة';
+    if (n === 2) return 'منحتان مطابقتان';
+    if (n >= 3 && n <= 10) return `${n} منح مطابقة`;
+    return `${n} منحة مطابقة`;
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = new FormData(form);
+    const degreeLevel = String(data.get('degreeLevel'));
+    const category = String(data.get('category'));
+    const country = String(data.get('country'));
+    const gpaRaw = data.get('gpa');
+    const gpaScale = String(data.get('gpaScale') ?? '4.0');
+    const userPercent = gpaRaw ? toPercent(parseFloat(String(gpaRaw)), gpaScale) : null;
+
+    let visible = 0;
+    for (const card of cards) {
+      const cardCategories = (card.dataset.categories ?? '').split('|');
+      const gpaMinRaw = card.dataset.gpamin;
+      const minPercent = gpaMinRaw
+        ? toPercent(parseFloat(gpaMinRaw), card.dataset.gpascale ?? '4.0')
+        : null;
+
+      const match =
+        (degreeLevel === 'any' || card.dataset.degree === degreeLevel) &&
+        (category === 'any' ||
+          cardCategories.includes(category) ||
+          cardCategories.includes('جميع التخصصات')) &&
+        (country === 'any' || card.dataset.country === country) &&
+        (userPercent === null || minPercent === null || userPercent >= minPercent);
+
+      card.hidden = !match;
+      if (match) visible++;
+    }
+
+    results.hidden = false;
+    empty.hidden = visible > 0;
+    grid.hidden = visible === 0;
+    count.textContent = visible > 0 ? countLabel(visible) : '';
+    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+</script>

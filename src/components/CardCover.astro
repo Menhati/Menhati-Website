@@ -1,5 +1,6 @@
 ---
-import { flagFor } from '../lib/flags';
+import { flagFor, countryName } from '../lib/flags';
+import { getLangFromUrl } from '../lib/i18n';
 
 interface Props {
   image?: string;
@@ -12,7 +13,9 @@ interface Props {
 }
 
 const { image, imageCredit, country, alt, ratio = 'aspect-[16/10]', eager = false } = Astro.props;
+const lang = getLangFromUrl(Astro.url);
 const flag = flagFor(country);
+const countryLabel = countryName(country, lang);
 
 // Deterministic tint per country: the same country always looks the same, and
 // neighbouring cards in a grid stay visually distinguishable. Used only for the
@@ -49,7 +52,7 @@ const tint = tints[hash % tints.length];
       <div class="absolute inset-0 bg-gradient-to-t from-navy-950/75 via-navy-950/10 to-transparent"></div>
       <span class="absolute bottom-2 inset-inline-start-2.5 inline-flex items-center gap-1.5 text-xs font-body font-semibold text-white">
         <span aria-hidden="true">{flag}</span>
-        {country}
+        {countryLabel}
       </span>
       {imageCredit && (
         /* Bottom-end: keeps clear of the country chip (bottom-start) and the
@@ -64,7 +67,7 @@ const tint = tints[hash % tints.length];
        than a stock/AI image that would misrepresent the real campus. */
     <div class={`absolute inset-0 bg-gradient-to-br ${tint} pattern-lattice flex flex-col items-center justify-center gap-1.5`}>
       <span class="text-[2.75rem] leading-none drop-shadow-lg select-none" aria-hidden="true">{flag}</span>
-      <span class="text-[0.8125rem] font-body font-semibold text-white/90">{country}</span>
+      <span class="text-[0.8125rem] font-body font-semibold text-white/90">{countryLabel}</span>
     </div>
   )}
 </div>

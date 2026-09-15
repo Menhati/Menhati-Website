@@ -55,7 +55,48 @@ misspelled field fails loudly instead of silently rendering wrong.
   leave `image` empty: the card falls back to a designed country cover, which is honest. Never
   substitute a stock or AI image of a different campus.
 
-## 3. Lead capture (Phase 3)
+## 3. Languages (Arabic + English)
+
+Arabic is the default and stays at the root (`/`, `/scholarships/chevening-master-uk`).
+English lives under `/en/…`. A language switcher sits in the navbar and mobile menu, and keeps you
+on the same page — including any active filters.
+
+**Interface text** lives in `src/lib/i18n.ts`, one flat key map per language. TypeScript enforces
+that English covers every key Arabic has, so a missing translation is a build error, not a blank
+string on the live site. Components read the language from the URL via `getLangFromUrl(Astro.url)`,
+so nothing is passed down as a prop.
+
+**Scholarship content** works differently — and the important part is what a translation *doesn't*
+contain:
+
+```
+src/content/scholarships/
+  chevening-master-uk.md        ← Arabic: the source of truth, all fields
+  en/
+    chevening-master-uk.md      ← English: only the words
+```
+
+An English file carries just `title`, `major`, `awardValue`, optionally `university` /
+`imageCredit`, and the markdown body. **Deadline, country, funding type, study level, GPA, image
+and apply URL are inherited from the Arabic entry** (`src/lib/content.ts`). Duplicating a deadline
+across two files is how a directory like this ends up publishing a stale date in one language —
+here it's structurally impossible.
+
+Link the two with `translationKey`, which must match the Arabic file's name. That key is also the
+URL slug, so both languages share one address.
+
+**Until a scholarship is translated**, the English site falls back to the Arabic entry. Structural
+fields (country, level, funding, dates, counts) still render in English because those come from
+display mappings, and the page shows a short note that the written details are Arabic-only. The
+English site is therefore complete from day one and improves as translations land.
+
+To add a translation: `/admin` → «الترجمات الإنجليزية», or drop a file in
+`src/content/scholarships/en/` copying the shape of `chevening-master-uk.md`.
+
+New country? Add its English name to `countryNamesEn` in `src/lib/flags.ts` (an unmapped country
+falls back to its Arabic name rather than breaking).
+
+## 4. Lead capture (Phase 3)
 
 Forms on the quiz and each scholarship page POST to `/api/lead`, implemented as a Cloudflare Pages
 Function in `functions/api/lead.ts`.
@@ -89,7 +130,7 @@ then add these environment variables in Cloudflare Pages → Settings → Enviro
 > Note: Pages Functions don't run under `npm run dev`. To test the endpoint locally use
 > `npx wrangler pages dev -- npm run dev`.
 
-## 4. Deploying to Cloudflare Pages
+## 5. Deploying to Cloudflare Pages
 
 1. Push this repo to GitHub.
 2. Cloudflare dashboard → Pages → Create a project → connect the repo.
@@ -98,17 +139,19 @@ then add these environment variables in Cloudflare Pages → Settings → Enviro
 
 Every push to `main` (including CMS commits) triggers an automatic rebuild.
 
-## 5. Before going live — checklist
+## 6. Before going live — checklist
 
-- [ ] **Replace the placeholder WhatsApp number** in `src/lib/site.ts` (`whatsappNumber`). It is
-      currently the scaffold value `966500000000` and is used by the floating button, navbar,
-      footer, every scholarship CTA and the lead form.
-- [ ] Confirm the social links in `src/lib/site.ts` point at the real accounts.
+- [x] ~~Replace the placeholder WhatsApp number~~ — `src/lib/site.ts` now holds the real number
+      (`601156994406`), used by the floating button, navbar, footer, every scholarship CTA and the
+      lead form.
+- [ ] Confirm the social links in `src/lib/site.ts` point at the real accounts (still the
+      scaffold `t.me/menhati`, `instagram.com/menhati`, … handles).
 - [ ] Set the real GitHub repo in `public/admin/config.yml` and finish OAuth setup.
 - [ ] Add `public/og-default.png` (1200×630) — referenced for social sharing previews.
-- [ ] Wire up lead delivery (section 3) so the team gets notified.
+- [ ] Wire up lead delivery (section 4) so the team gets notified.
+- [ ] Translate the remaining scholarships into English (section 3) — 1 of 33 done.
 
-## 6. Still to build
+## 7. Still to build
 
 - Daily rebuild cron (GitHub Actions) so newly-expired scholarships move to the closed section
   without a manual deploy.
@@ -119,16 +162,28 @@ Every push to `main` (including CMS commits) triggers an automatic rebuild.
 
 ```
 src/
-  lib/           site.ts (contact details), flags.ts, scholarship.ts (shared display logic)
-  components/    ScholarshipCard, CardCover, LeadForm, CountdownSeal, Navbar, Footer, Logo
-  content/       config.ts (schema) + scholarships/*.md (the data)
-  pages/         index, quiz, scholarships/index, scholarships/[slug]
-functions/api/   lead.ts (Cloudflare Pages Function)
+  lib/             i18n.ts (UI strings + locale helpers), content.ts (language-aware
+                   collection access + translation merging), site.ts (contact details),
+                   flags.ts (flags + English country names), scholarship.ts (display logic)
+  components/      ScholarshipCard, CardCover, LeadForm, LanguageSwitcher, Navbar, Footer, Logo
+    pages/         HomePage, ScholarshipsPage, QuizPage, ScholarshipDetail — the real page
+                   bodies; both language routes render these
+  content/         config.ts (schema) + scholarships/*.md (Arabic) + scholarships/en/*.md
+  pages/           thin route files only:
+                     index, quiz, scholarships/index, scholarships/[slug]
+                     en/… — same four, rendering the same page components
+functions/api/     lead.ts (Cloudflare Pages Function)
 ```
 
-- **`src/lib/scholarship.ts`** owns deadline/status/degree wording and GPA normalization. Put shared
-  display logic here — these rules previously drifted between pages.
+- **`src/lib/scholarship.ts`** owns deadline/status/degree wording and GPA normalization, in both
+  languages. Put shared display logic here — these rules previously drifted between pages.
 - **`src/lib/site.ts`** is the only place contact details live.
+- **Page bodies live in `src/components/pages/`**, not in `src/pages/`. The files under
+  `src/pages/` are three-line route stubs. This is what lets `/` and `/en/…` share one
+  implementation instead of two copies drifting apart.
+- **Arabic counted nouns aren't English plurals** — the plural form only applies to 3–10, and 11+
+  reverts to the singular ("4 منح" but "11 منحة"). `countScholarships()` / `daysLabel()` handle
+  this; don't interpolate a bare number next to a noun.
 - **`.mh-prose` styles live in `global.css`**, not in a page `<style>` block, so a page rewrite
   can't silently leave markdown content unstyled (this already happened once).
 - **Keep the Tailwind colour scales complete** in `tailwind.config.mjs`. A missing step (e.g.

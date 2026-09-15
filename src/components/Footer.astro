@@ -1,38 +1,60 @@
 ---
 import Logo from './Logo.astro';
 import { social } from '../lib/site';
+import { getLangFromUrl, useTranslations, localizePath } from '../lib/i18n';
+
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+
+const links = [
+  { href: localizePath('/scholarships', lang), label: t('nav.scholarships') },
+  { href: localizePath('/quiz', lang), label: t('nav.quiz') },
+  { href: localizePath('/#how-it-works', lang), label: t('nav.how') },
+];
+
+// Social labels are Arabic in site.ts; show English names on the English site.
+const socialLabelsEn: Record<string, string> = {
+  واتساب: 'WhatsApp',
+  تيليجرام: 'Telegram',
+  إنستغرام: 'Instagram',
+  فيسبوك: 'Facebook',
+  يوتيوب: 'YouTube',
+};
 ---
 
 <footer class="bg-navy-900 text-navy-100 mt-20">
   <div class="max-w-6xl mx-auto px-5 py-12 grid gap-10 md:grid-cols-3">
     <div>
       <div class="mb-4"><Logo height={38} /></div>
-      <p class="text-sm leading-relaxed text-navy-200">
-        دليلك الموثوق للمنح الدراسية الممولة حول العالم، مع مساعدة كاملة في إعداد الملفات
-        والترجمة المعتمدة.
+      <p class="text-sm leading-relaxed text-navy-200 max-w-sm">
+        {t('footer.tagline')}
       </p>
     </div>
 
     <div>
-      <p class="font-display font-bold text-sm text-white mb-3">روابط سريعة</p>
+      <p class="font-display font-bold text-sm text-white mb-3">{t('footer.quickLinks')}</p>
       <ul class="space-y-2 text-sm">
-        <li><a href="/scholarships" class="hover:text-gold-300">المنح الدراسية</a></li>
-        <li><a href="/quiz" class="hover:text-gold-300">اعثر على منحتك</a></li>
-        <li><a href="/#how-it-works" class="hover:text-gold-300">كيف نعمل</a></li>
+        {links.map((l) => (
+          <li><a href={l.href} class="hover:text-gold-300 transition-colors">{l.label}</a></li>
+        ))}
       </ul>
     </div>
 
     <div>
-      <p class="font-display font-bold text-sm text-white mb-3">تابعنا</p>
+      <p class="font-display font-bold text-sm text-white mb-3">{t('footer.follow')}</p>
       <ul class="space-y-2 text-sm">
         {social.map((s) => (
-          <li><a href={s.href} target="_blank" rel="noopener" class="hover:text-gold-300">{s.label}</a></li>
+          <li>
+            <a href={s.href} target="_blank" rel="noopener" class="hover:text-gold-300 transition-colors">
+              {lang === 'en' ? (socialLabelsEn[s.label] ?? s.label) : s.label}
+            </a>
+          </li>
         ))}
       </ul>
     </div>
   </div>
 
   <div class="border-t border-navy-700 py-4 text-center text-xs text-navy-300">
-    © {new Date().getFullYear()} منحتي. جميع الحقوق محفوظة.
+    © {new Date().getFullYear()} {t('site.name')}. {t('footer.rights')}
   </div>
 </footer>

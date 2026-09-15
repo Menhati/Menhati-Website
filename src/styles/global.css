@@ -19,6 +19,24 @@
     text-wrap: balance;
   }
 
+  /* English uses a Latin family and slightly tighter leading — 1.9 is right for
+     Arabic but reads as over-spaced for Latin text. */
+  html[lang='en'] {
+    font-family: 'Inter', system-ui, sans-serif;
+    line-height: 1.7;
+  }
+  html[lang='en'] h1,
+  html[lang='en'] h2,
+  html[lang='en'] h3,
+  html[lang='en'] h4,
+  html[lang='en'] .font-display {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+    letter-spacing: -0.015em;
+  }
+  html[lang='en'] .font-body {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
   /* Consistent, visible keyboard focus everywhere */
   :focus-visible {
     outline: 2px solid theme('colors.gold.500');
@@ -196,4 +214,20 @@
   color: #96712A;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* Latin equivalents for the markdown body on the English site */
+html[lang='en'] .mh-prose p,
+html[lang='en'] .mh-prose ul li,
+html[lang='en'] .mh-prose ol li {
+  font-family: 'Inter', system-ui, sans-serif;
+  line-height: 1.75;
+}
+html[lang='en'] .mh-prose h2 {
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+}
+/* Ordered lists use Arabic-Indic numerals in Arabic; Latin digits in English */
+html[lang='en'] .mh-prose ol li::before {
+  content: counter(mh-step);
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
 }

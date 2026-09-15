@@ -1,0 +1,301 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import ScholarshipCard from '../ScholarshipCard.astro';
+import { countryName } from '../../lib/flags';
+import { degreeLabelsByLang, statusOf } from '../../lib/scholarship';
+import { getLangFromUrl, useTranslations } from '../../lib/i18n';
+import { getScholarshipsFor, scholarshipPath } from '../../lib/content';
+
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+
+const now = Date.now();
+const all = (await getScholarshipsFor(lang)).sort(
+  (a, b) => a.data.deadline.valueOf() - b.data.deadline.valueOf()
+);
+
+const open = all.filter((s) => s.data.deadline.valueOf() >= now);
+const closed = all
+  .filter((s) => s.data.deadline.valueOf() < now)
+  .sort((a, b) => b.data.deadline.valueOf() - a.data.deadline.valueOf());
+
+const countries = [...new Set(all.map((s) => s.data.country))].sort((a, b) =>
+  countryName(a, lang).localeCompare(countryName(b, lang), lang)
+);
+
+/** Lowercased blob used for client-side text matching. Includes the English
+ *  country name so searching "Germany" works on the English site even while the
+ *  entry's own fields are still Arabic. */
+const haystack = (s: (typeof all)[number]) =>
+  [
+    s.data.title,
+    s.data.university ?? '',
+    s.data.country,
+    countryName(s.data.country, lang),
+    s.data.major,
+    s.data.awardValue,
+  ]
+    .join(' ')
+    .toLowerCase();
+---
+
+<Layout title={t('list.title')} description={t('site.description')}>
+  <section class="max-w-6xl mx-auto px-5 py-10 sm:py-14">
+    <header class="mb-8">
+      <h1 class="font-display font-black text-2xl sm:text-3xl text-navy-900">{t('list.title')}</h1>
+      <p class="mt-2.5 text-navy-500 font-body text-sm sm:text-base leading-[1.95] measure">
+        {all.length} {t('list.intro')}
+      </p>
+    </header>
+
+    <!-- ── Search + filters ──────────────────────────────────────────── -->
+    <div class="bg-white border border-navy-100 rounded-2xl p-4 sm:p-5 mb-8 shadow-sm">
+      <label for="search" class="sr-only">{t('list.searchLabel')}</label>
+      <div class="flex items-center gap-2 bg-navy-50 rounded-xl px-3.5 mb-3">
+        <span class="text-navy-300 shrink-0" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <circle cx="11" cy="11" r="7" /><path stroke-linecap="round" d="m20 20-3.5-3.5" />
+          </svg>
+        </span>
+        <input
+          id="search"
+          type="search"
+          placeholder={t('list.searchPlaceholder')}
+          class="flex-1 min-w-0 bg-transparent py-3 font-body text-sm text-navy-900 placeholder:text-navy-300 focus:outline-none"
+        />
+      </div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+        <select id="filter-country" class="filter-select" aria-label={t('list.filterCountry')}>
+          <option value="any">{t('list.allCountries')}</option>
+          {countries.map((c) => <option value={c}>{countryName(c, lang)}</option>)}
+        </select>
+        <select id="filter-degree" class="filter-select" aria-label={t('list.filterDegree')}>
+          <option value="any">{t('list.allDegrees')}</option>
+          {Object.entries(degreeLabelsByLang[lang]).map(([v, l]) => <option value={v}>{l}</option>)}
+        </select>
+        <select id="filter-funding" class="filter-select" aria-label={t('list.filterFunding')}>
+          <option value="any">{t('list.allFunding')}</option>
+          <option value="fully-funded">{t('card.fullyFunded')}</option>
+          <option value="partial">{t('card.partial')}</option>
+        </select>
+        <select id="filter-status" class="filter-select" aria-label={t('list.filterStatus')}>
+          <option value="any">{t('list.allStatus')}</option>
+          <option value="open">{t('list.onlyOpen')}</option>
+          <option value="closing">{t('list.onlyClosing')}</option>
+          <option value="closed">{t('list.onlyClosed')}</option>
+        </select>
+      </div>
+
+      <div class="flex items-center justify-between gap-3 mt-3.5 pt-3.5 border-t border-navy-50">
+        <p id="result-count" class="text-[0.8125rem] font-body text-navy-500 tabular" aria-live="polite"></p>
+        <button
+          id="reset-filters"
+          type="button"
+          class="text-[0.8125rem] font-body text-navy-400 hover:text-gold-700 transition-colors"
+          hidden
+        >
+          {t('list.reset')}
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Open ──────────────────────────────────────────────────────── -->
+    <div id="section-open" class="mb-14">
+      <h2 class="font-display font-bold text-lg sm:text-xl text-navy-900 mb-5 flex items-center gap-2.5">
+        <span class="w-2 h-2 rounded-full bg-live"></span>
+        {t('list.openSection')}
+      </h2>
+      <div id="grid-open" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {open.map((s, i) => (
+          <div
+            class="card card-in"
+            style={`animation-delay:${Math.min(i, 8) * 55}ms`}
+            data-country={s.data.country}
+            data-degree={s.data.degreeLevel}
+            data-funding={s.data.fundingType}
+            data-status={statusOf(s.data.deadline, now)}
+            data-search={haystack(s)}
+          >
+            <ScholarshipCard
+              href={scholarshipPath(s.key, lang)}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+              eager={i < 3}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <!-- ── Closed ────────────────────────────────────────────────────── -->
+    <div id="section-closed">
+      <h2 class="font-display font-bold text-lg sm:text-xl text-navy-900 mb-1.5 flex items-center gap-2.5">
+        <span class="w-2 h-2 rounded-full bg-navy-300"></span>
+        {t('list.closedSection')}
+      </h2>
+      <p class="text-sm text-navy-500 font-body mb-5 measure leading-[1.95]">{t('list.closedNote')}</p>
+      <div id="grid-closed" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {closed.map((s) => (
+          <div
+            class="card"
+            data-country={s.data.country}
+            data-degree={s.data.degreeLevel}
+            data-funding={s.data.fundingType}
+            data-status="closed"
+            data-search={haystack(s)}
+          >
+            <ScholarshipCard
+              href={scholarshipPath(s.key, lang)}
+              title={s.data.title}
+              major={s.data.major}
+              country={s.data.country}
+              university={s.data.university}
+              gpaMin={s.data.gpaMin}
+              gpaScale={s.data.gpaScale}
+              awardValue={s.data.awardValue}
+              fundingType={s.data.fundingType}
+              degreeLevel={s.data.degreeLevel}
+              deadline={s.data.deadline}
+              image={s.data.image}
+              imageCredit={s.data.imageCredit}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <!-- ── Empty state ───────────────────────────────────────────────── -->
+    <div id="no-results" class="text-center py-16" hidden>
+      <p class="font-display font-bold text-lg text-navy-900">{t('list.emptyTitle')}</p>
+      <p class="mt-2 text-sm text-navy-500 font-body measure mx-auto leading-[1.95]">{t('list.emptyBody')}</p>
+      <button id="clear-empty" type="button" class="mt-5 bg-navy-900 hover:bg-navy-800 text-white font-body font-semibold text-sm px-6 py-3 rounded-xl transition-colors">
+        {t('list.emptyReset')}
+      </button>
+    </div>
+
+    <!-- Copy the client script needs, kept out of the JS so it stays language-agnostic -->
+    <span id="i18n" hidden data-lang={lang} data-word-scholarship={t('nav.scholarships')}></span>
+  </section>
+</Layout>
+
+<style>
+  .filter-select {
+    @apply w-full rounded-xl border border-navy-100 bg-white px-3 py-2.5 text-[0.8125rem] font-body text-navy-700 focus:border-gold-500 focus:outline-none transition-colors;
+  }
+</style>
+
+<script>
+  const search = document.getElementById('search') as HTMLInputElement;
+  const selects = {
+    country: document.getElementById('filter-country') as HTMLSelectElement,
+    degree: document.getElementById('filter-degree') as HTMLSelectElement,
+    funding: document.getElementById('filter-funding') as HTMLSelectElement,
+    status: document.getElementById('filter-status') as HTMLSelectElement,
+  };
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('.card'));
+  const sectionOpen = document.getElementById('section-open')!;
+  const sectionClosed = document.getElementById('section-closed')!;
+  const noResults = document.getElementById('no-results')!;
+  const countEl = document.getElementById('result-count')!;
+  const resetBtn = document.getElementById('reset-filters') as HTMLButtonElement;
+  const clearEmptyBtn = document.getElementById('clear-empty') as HTMLButtonElement;
+  const lang = document.getElementById('i18n')?.dataset.lang ?? 'ar';
+
+  /** Arabic counted nouns: plural only for 3–10, singular again at 11+. */
+  function countLabel(n: number): string {
+    if (lang === 'en') return n === 1 ? '1 matching scholarship' : `${n} matching scholarships`;
+    if (n === 1) return 'منحة واحدة مطابقة';
+    if (n === 2) return 'منحتان مطابقتان';
+    if (n >= 3 && n <= 10) return `${n} منح مطابقة`;
+    return `${n} منحة مطابقة`;
+  }
+
+  /** Seed controls from the URL so hero chips like ?country=… deep-link here. */
+  function readUrl() {
+    const p = new URLSearchParams(location.search);
+    if (p.get('q')) search.value = p.get('q')!;
+    for (const [key, el] of Object.entries(selects)) {
+      const v = p.get(key);
+      if (v && [...el.options].some((o) => o.value === v)) el.value = v;
+    }
+  }
+
+  function apply() {
+    const q = search.value.trim().toLowerCase();
+    const country = selects.country.value;
+    const degree = selects.degree.value;
+    const funding = selects.funding.value;
+    const status = selects.status.value;
+
+    let visibleOpen = 0;
+    let visibleClosed = 0;
+
+    for (const card of cards) {
+      const cardStatus = card.dataset.status ?? '';
+      const matchStatus =
+        status === 'any' || (status === 'open' ? cardStatus !== 'closed' : cardStatus === status);
+
+      const match =
+        (!q || (card.dataset.search ?? '').includes(q)) &&
+        (country === 'any' || card.dataset.country === country) &&
+        (degree === 'any' || card.dataset.degree === degree) &&
+        (funding === 'any' || card.dataset.funding === funding) &&
+        matchStatus;
+
+      card.hidden = !match;
+      if (match) {
+        if (cardStatus === 'closed') visibleClosed++;
+        else visibleOpen++;
+      }
+    }
+
+    sectionOpen.hidden = visibleOpen === 0;
+    sectionClosed.hidden = visibleClosed === 0;
+    const total = visibleOpen + visibleClosed;
+    noResults.hidden = total > 0;
+    countEl.textContent = total > 0 ? countLabel(total) : '';
+
+    const dirty = !!q || country !== 'any' || degree !== 'any' || funding !== 'any' || status !== 'any';
+    resetBtn.hidden = !dirty;
+
+    // Keep the URL shareable without adding history entries on every keystroke.
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (country !== 'any') p.set('country', country);
+    if (degree !== 'any') p.set('degree', degree);
+    if (funding !== 'any') p.set('funding', funding);
+    if (status !== 'any') p.set('status', status);
+    const qs = p.toString();
+    history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
+  }
+
+  function reset() {
+    search.value = '';
+    for (const el of Object.values(selects)) el.value = 'any';
+    apply();
+    search.focus();
+  }
+
+  let timer: number;
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(apply, 150);
+  });
+  for (const el of Object.values(selects)) el.addEventListener('change', apply);
+  resetBtn.addEventListener('click', reset);
+  clearEmptyBtn.addEventListener('click', reset);
+
+  readUrl();
+  apply();
+</script>

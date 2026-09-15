@@ -2,15 +2,39 @@
  * Shared display helpers for scholarship data.
  * Kept in one place so cards, listings, the quiz and detail pages all agree on
  * how a deadline / degree / status is worded — these used to drift apart.
+ *
+ * Everything user-facing takes a `lang`; Arabic remains the default so existing
+ * call sites keep working.
  */
 
-export const degreeLabels: Record<string, string> = {
-  bachelor: 'بكالوريوس',
-  master: 'ماجستير',
-  phd: 'دكتوراه',
-  diploma: 'دبلوم',
+import { defaultLang, type Lang } from './i18n';
+
+export const degreeLabelsByLang: Record<Lang, Record<string, string>> = {
+  ar: {
+    bachelor: 'بكالوريوس',
+    master: 'ماجستير',
+    phd: 'دكتوراه',
+    diploma: 'دبلوم',
+  },
+  en: {
+    bachelor: "Bachelor's",
+    master: "Master's",
+    phd: 'PhD',
+    diploma: 'Diploma',
+  },
 };
 
+/** Kept for existing Arabic-only call sites. */
+export const degreeLabels = degreeLabelsByLang.ar;
+
+export function degreeLabel(level: string, lang: Lang = defaultLang): string {
+  return degreeLabelsByLang[lang][level] ?? level;
+}
+
+/**
+ * Field categories are stored in Arabic in the content schema (they're a Zod
+ * enum), so English is a display-time mapping rather than a second set of values.
+ */
 export const fieldCategories = [
   'هندسة وتقنية المعلومات',
   'إدارة أعمال واقتصاد',
@@ -24,6 +48,24 @@ export const fieldCategories = [
   'زراعة وبيئة',
   'جميع التخصصات',
 ] as const;
+
+export const fieldCategoryEn: Record<string, string> = {
+  'هندسة وتقنية المعلومات': 'Engineering & IT',
+  'إدارة أعمال واقتصاد': 'Business & Economics',
+  'طب وعلوم صحية': 'Medicine & Health Sciences',
+  'علوم طبيعية وتطبيقية': 'Natural & Applied Sciences',
+  'علوم إنسانية واجتماعية': 'Humanities & Social Sciences',
+  قانون: 'Law',
+  'تربية وتعليم': 'Education',
+  'إعلام واتصال': 'Media & Communication',
+  'علوم شرعية ودراسات إسلامية': 'Islamic Studies',
+  'زراعة وبيئة': 'Agriculture & Environment',
+  'جميع التخصصات': 'All fields',
+};
+
+export function fieldCategoryLabel(category: string, lang: Lang = defaultLang): string {
+  return lang === 'ar' ? category : (fieldCategoryEn[category] ?? category);
+}
 
 export type ScholarshipStatus = 'open' | 'closing' | 'closed';
 
@@ -39,15 +81,29 @@ export function statusOf(deadline: Date, now: number = Date.now()): ScholarshipS
   return 'open';
 }
 
-export const statusLabels: Record<ScholarshipStatus, string> = {
-  open: 'مفتوحة للتقديم',
-  closing: 'تغلق قريباً',
-  closed: 'مغلقة حالياً',
+export const statusLabelsByLang: Record<Lang, Record<ScholarshipStatus, string>> = {
+  ar: {
+    open: 'مفتوحة للتقديم',
+    closing: 'تغلق قريباً',
+    closed: 'مغلقة حالياً',
+  },
+  en: {
+    open: 'Open for applications',
+    closing: 'Closing soon',
+    closed: 'Currently closed',
+  },
 };
 
-/** Arabic-Indic formatted date, e.g. ١٥ أكتوبر ٢٠٢٦ */
-export function formatDeadline(deadline: Date): string {
-  return deadline.toLocaleDateString('ar-EG', {
+/** Kept for existing Arabic-only call sites. */
+export const statusLabels = statusLabelsByLang.ar;
+
+export function statusLabel(status: ScholarshipStatus, lang: Lang = defaultLang): string {
+  return statusLabelsByLang[lang][status];
+}
+
+/** ١٥ أكتوبر ٢٠٢٦ in Arabic; 15 October 2026 in English. */
+export function formatDeadline(deadline: Date, lang: Lang = defaultLang): string {
+  return deadline.toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-GB', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -63,32 +119,43 @@ export function gpaToPercent(value: number, scale: string): number {
   return (value / max) * 100;
 }
 
+const digits = (n: number, lang: Lang) =>
+  lang === 'ar' ? n.toLocaleString('ar-EG') : n.toLocaleString('en-US');
+
 /**
  * Arabic counted nouns don't work like English: the plural form is only used
  * for 3–10, and 11+ goes back to the singular. "4 منحة" reads as broken Arabic.
  */
-export function countScholarships(n: number): string {
+export function countScholarships(n: number, lang: Lang = defaultLang): string {
+  if (lang === 'en') return n === 1 ? '1 scholarship' : `${n} scholarships`;
   if (n === 1) return 'منحة واحدة';
   if (n === 2) return 'منحتان';
   if (n >= 3 && n <= 10) return `${n} منح`;
   return `${n} منحة`;
 }
 
-/** Arabic-Indic digits, matching the ar-EG dates used elsewhere. */
-const ar = (n: number) => n.toLocaleString('ar-EG');
-
 /** "يوم واحد" / "يومان" / "٥ أيام" / "٨٢ يوم" — Arabic counted-noun rules. */
-export function daysLabel(n: number): string {
+export function daysLabel(n: number, lang: Lang = defaultLang): string {
+  if (lang === 'en') return n === 1 ? '1 day' : `${n} days`;
   if (n === 1) return 'يوم واحد';
   if (n === 2) return 'يومان';
-  if (n >= 3 && n <= 10) return `${ar(n)} أيام`;
-  return `${ar(n)} يوم`;
+  if (n >= 3 && n <= 10) return `${digits(n, 'ar')} أيام`;
+  return `${digits(n, 'ar')} يوم`;
 }
 
 /** Short countdown text for the badge shown on each card. */
-export function countdownLabel(deadline: Date, now: number = Date.now()): string {
+export function countdownLabel(
+  deadline: Date,
+  lang: Lang = defaultLang,
+  now: number = Date.now()
+): string {
   const days = daysUntil(deadline, now);
+  if (lang === 'en') {
+    if (days < 0) return 'Applications closed';
+    if (days === 0) return 'Closes today';
+    return `${daysLabel(days, 'en')} left`;
+  }
   if (days < 0) return 'انتهى التقديم';
   if (days === 0) return 'ينتهي اليوم';
-  return `متبقٍ ${daysLabel(days)}`;
+  return `متبقٍ ${daysLabel(days, 'ar')}`;
 }

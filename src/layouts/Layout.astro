@@ -3,6 +3,7 @@ import '../styles/global.css';
 import Navbar from '../components/Navbar.astro';
 import Footer from '../components/Footer.astro';
 import WhatsAppButton from '../components/WhatsAppButton.astro';
+import { getLangFromUrl, useTranslations, languages, canonicalPath, localizePath } from '../lib/i18n';
 
 interface Props {
   title: string;
@@ -13,16 +14,28 @@ interface Props {
   hasMobileCta?: boolean;
 }
 
-const {
-  title,
-  description = 'منحتي — دليلك الموثوق للمنح الدراسية الممولة حول العالم، مع مساعدة كاملة في التقديم والترجمة المعتمدة.',
-  ogImage = '/og-default.png',
-  hasMobileCta = false,
-} = Astro.props;
+const lang = getLangFromUrl(Astro.url);
+const t = useTranslations(lang);
+const { dir, htmlLang, ogLocale } = languages[lang];
+
+const { title, description = t('site.description'), ogImage = '/og-default.png', hasMobileCta = false } =
+  Astro.props;
+
+// Same page in the other language, for hreflang + canonical
+const canonical = canonicalPath(Astro.url.pathname);
+const arHref = new URL(localizePath(canonical, 'ar'), Astro.site);
+const enHref = new URL(localizePath(canonical, 'en'), Astro.site);
+
+// Arabic uses Tajawal/Cairo; English gets a Latin family instead of forcing
+// Arabic webfonts to render Latin text (which looks off at body sizes).
+const fontHref =
+  lang === 'ar'
+    ? 'https://fonts.googleapis.com/css2?family=Tajawal:wght@500;700;900&family=Cairo:wght@400;500;600;700&display=swap'
+    : 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap';
 ---
 
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang={htmlLang} dir={dir}>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -30,20 +43,22 @@ const {
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Tajawal:wght@500;700;900&family=Cairo:wght@400;500;600;700&display=swap"
-    rel="stylesheet"
-  />
+  <link href={fontHref} rel="stylesheet" />
+
+  <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site)} />
+  <link rel="alternate" hreflang="ar" href={arHref} />
+  <link rel="alternate" hreflang="en" href={enHref} />
+  <link rel="alternate" hreflang="x-default" href={arHref} />
 
   <meta property="og:title" content={title} />
   <meta property="og:description" content={description} />
   <meta property="og:type" content="website" />
-  <meta property="og:locale" content="ar_AR" />
+  <meta property="og:locale" content={ogLocale} />
   <meta property="og:image" content={new URL(ogImage, Astro.site)} />
   <meta name="twitter:card" content="summary_large_image" />
 
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <title>{title} | منحتي</title>
+  <title>{title} | {t('site.name')}</title>
 </head>
 <body class="min-h-screen flex flex-col">
   <Navbar />
